@@ -1,8 +1,25 @@
-# Welcome to your Expo app 👋
+# Scripture Mastery App
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+A mobile application that tests users' knowledge of scriptures from the King James Bible, Book of Mormon, Doctrine & Covenants, and Pearl of Great Price.
 
-## Get started
+## App Overview
+
+Scripture Mastery is designed to help users improve their knowledge of LDS scriptures. The core gameplay involves showing users a scripture passage and asking them to identify its source at varying levels of difficulty.
+
+## Features
+
+### Game Modes
+1. **Easy Mode**: Users guess only the book (e.g., "Matthew" or "1 Nephi")
+2. **Medium Mode**: Users guess the book and chapter (e.g., "John 3")
+3. **Hard Mode**: Users guess the book, chapter, and verse (e.g., "Alma 32:21")
+
+### Key Features
+- Clean, distraction-free design
+- Serif font for scripture text
+- Haptic feedback for correct/incorrect answers
+- Light/dark mode support
+
+## Getting Started
 
 1. Install dependencies
 
@@ -13,38 +30,38 @@ This is an [Expo](https://expo.dev) project created with [`create-expo-app`](htt
 2. Start the app
 
    ```bash
-    npx expo start
+   npx expo start
    ```
 
-In the output, you'll find options to open the app in a
+## Development
 
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
+This app is built with:
+- React Native with Expo
+- TypeScript
+- Expo Router for navigation
 
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
+### Project Structure
 
-## Get a fresh project
+- `/app`: Main application screens and navigation
+- `/components`: Reusable UI components
+- `/constants`: App-wide constants like colors
+- `/data`: Scripture data and services
+- `/types`: TypeScript type definitions
 
-When you're ready, run:
+## Data Source
 
-```bash
-npm run reset-project
-```
+The scripture data is currently using placeholder content. In a production version, it would use the [bcbooks/scriptures-json](https://github.com/bcbooks/scriptures-json) repository or a similar data source.
 
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
+## Future Enhancements
 
-## Learn more
+- Progress tracking and statistics
+- Customizable scripture collections
+- Timed challenges
+- Multi-player or competitive modes
+- Detailed scripture study tools
+- Bookmarking favorite scriptures
+- Social sharing features
 
-To learn more about developing your project with Expo, look at the following resources:
+## License
 
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
-
-## Join the community
-
-Join our community of developers creating universal apps.
-
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+This project is licensed under the MIT License.
