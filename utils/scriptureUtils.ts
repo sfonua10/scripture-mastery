@@ -32,6 +32,22 @@ export const getNextRandomScripture = (
 };
 
 /**
+ * Normalize book names to handle variations
+ */
+const normalizeBookName = (bookName: string): string => {
+  const normalized = bookName.trim().toLowerCase();
+  
+  // Handle D&C variations
+  if (normalized === 'd&c' || 
+      normalized === 'doctrine & covenants' || 
+      normalized === 'doctrine and covenants') {
+    return 'd&c';
+  }
+  
+  return normalized;
+};
+
+/**
  * Check if a guess is correct based on the game mode
  */
 export const checkGuess = (
@@ -41,14 +57,15 @@ export const checkGuess = (
 ): boolean => {
   const { book, chapter, verse } = scripture.reference;
   const normalizedGuess = guess.trim().toLowerCase();
+  const normalizedBook = normalizeBookName(book);
 
   switch (mode) {
     case "easy":
-      return normalizedGuess === book.toLowerCase();
+      return normalizeBookName(normalizedGuess) === normalizedBook;
     case "medium":
-      return normalizedGuess === `${book.toLowerCase()} ${chapter}`;
+      return normalizeBookName(normalizedGuess) === `${normalizedBook} ${chapter}`;
     case "hard":
-      return normalizedGuess === `${book.toLowerCase()} ${chapter}:${verse}`;
+      return normalizeBookName(normalizedGuess) === `${normalizedBook} ${chapter}:${verse}`;
     default:
       return false;
   }
