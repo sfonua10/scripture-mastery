@@ -36,14 +36,20 @@ export const getNextRandomScripture = (
  */
 const normalizeBookName = (bookName: string): string => {
   const normalized = bookName.trim().toLowerCase();
-  
-  // Handle D&C variations
-  if (normalized === 'd&c' || 
-      normalized === 'doctrine & covenants' || 
-      normalized === 'doctrine and covenants') {
+
+  // Handle D&C variations - be lenient with any reasonable attempt
+  const noSpaces = normalized.replace(/\s+/g, '');
+
+  if (
+    noSpaces === 'd&c' ||
+    noSpaces === 'dc' ||
+    (noSpaces.includes('doctrine') && noSpaces.includes('covenant')) ||
+    normalized.startsWith('d&c') ||
+    normalized.startsWith('d & c')
+  ) {
     return 'd&c';
   }
-  
+
   return normalized;
 };
 
