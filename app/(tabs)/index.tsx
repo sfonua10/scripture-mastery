@@ -6,8 +6,10 @@ import { Image } from 'expo-image';
 
 import { ThemedText } from '@/components/ThemedText';
 import { ThemedView } from '@/components/ThemedView';
+import { TutorialModal } from '@/components/TutorialModal';
 import { Colors } from '@/constants/Colors';
 import { useColorScheme } from '@/hooks/useColorScheme';
+import { useTutorial } from '@/hooks/useTutorial';
 
 // Import images using ES6 imports
 const darkIcon = require('@/assets/icons/ios-dark.png');
@@ -15,7 +17,8 @@ const lightIcon = require('@/assets/icons/ios-light.png');
 
 export default function HomeScreen() {
   const colorScheme = useColorScheme();
-  
+  const { showTutorial, dismissTutorial } = useTutorial();
+
   const handleModeSelect = (mode: 'easy' | 'medium' | 'hard') => {
     router.push({
       pathname: '/game',
@@ -125,6 +128,8 @@ export default function HomeScreen() {
       <ThemedView style={styles.footer}>
         <ThemedText style={styles.versionText}>v1.0.0</ThemedText>
       </ThemedView>
+
+      <TutorialModal visible={showTutorial} onDismiss={dismissTutorial} />
     </SafeAreaView>
   );
 }

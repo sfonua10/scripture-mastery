@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { StyleSheet, TouchableOpacity, Linking, View, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -6,12 +6,23 @@ import { Stack } from 'expo-router';
 
 import { ThemedText } from '@/components/ThemedText';
 import { ThemedView } from '@/components/ThemedView';
+import { TutorialModal } from '@/components/TutorialModal';
 import { Colors } from '@/constants/Colors';
 import { useColorScheme } from '@/hooks/useColorScheme';
+import { useTutorial } from '@/hooks/useTutorial';
+import { useTheme, ThemePreference } from '@/contexts/ThemeContext';
 
 export default function SettingsScreen() {
   const colorScheme = useColorScheme();
-  
+  const { showTutorial, dismissTutorial, openTutorial } = useTutorial();
+  const { preference, setPreference } = useTheme();
+
+  const themeOptions: { value: ThemePreference; label: string; icon: keyof typeof Ionicons.glyphMap }[] = [
+    { value: 'light', label: 'Light', icon: 'sunny-outline' },
+    { value: 'dark', label: 'Dark', icon: 'moon-outline' },
+    { value: 'system', label: 'System', icon: 'phone-portrait-outline' },
+  ];
+
   const handleLearnMorePress = () => {
     Linking.openURL('https://www.churchofjesuschrist.org/study/scriptures?lang=eng');
   };
@@ -57,24 +68,88 @@ export default function SettingsScreen() {
       />
       
       <ThemedView style={styles.section}>
-        <ThemedText style={styles.sectionTitle}>Resources</ThemedText>
-        
-        <TouchableOpacity 
+        <ThemedText style={styles.sectionTitle}>Appearance</ThemedText>
+
+        <ThemedView
           style={[
-            styles.settingContainer, 
-            { 
+            styles.themeContainer,
+            {
               borderColor: Colors[colorScheme ?? 'light'].border,
-              backgroundColor: Colors[colorScheme ?? 'light'].card 
+              backgroundColor: Colors[colorScheme ?? 'light'].card
             }
-          ]} 
+          ]}
+        >
+          {themeOptions.map((option) => (
+            <TouchableOpacity
+              key={option.value}
+              style={[
+                styles.themeOption,
+                preference === option.value && {
+                  backgroundColor: Colors[colorScheme ?? 'light'].tint + '20',
+                  borderColor: Colors[colorScheme ?? 'light'].tint,
+                },
+              ]}
+              onPress={() => setPreference(option.value)}
+            >
+              <Ionicons
+                name={option.icon}
+                size={24}
+                color={preference === option.value
+                  ? Colors[colorScheme ?? 'light'].tint
+                  : Colors[colorScheme ?? 'light'].icon}
+              />
+              <ThemedText
+                style={[
+                  styles.themeLabel,
+                  preference === option.value && { color: Colors[colorScheme ?? 'light'].tint }
+                ]}
+              >
+                {option.label}
+              </ThemedText>
+            </TouchableOpacity>
+          ))}
+        </ThemedView>
+      </ThemedView>
+
+      <ThemedView style={styles.section}>
+        <ThemedText style={styles.sectionTitle}>Resources</ThemedText>
+
+        <TouchableOpacity
+          style={[
+            styles.settingContainer,
+            {
+              borderColor: Colors[colorScheme ?? 'light'].border,
+              backgroundColor: Colors[colorScheme ?? 'light'].card
+            }
+          ]}
           onPress={handleLearnMorePress}
         >
           <ThemedText style={styles.settingLabel}>Learn More</ThemedText>
           <View style={styles.iconContainer}>
-            <Ionicons 
-              name="open-outline" 
-              size={20} 
-              color={Colors[colorScheme ?? 'light'].tint} 
+            <Ionicons
+              name="open-outline"
+              size={20}
+              color={Colors[colorScheme ?? 'light'].tint}
+            />
+          </View>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={[
+            styles.settingContainer,
+            {
+              borderColor: Colors[colorScheme ?? 'light'].border,
+              backgroundColor: Colors[colorScheme ?? 'light'].card
+            }
+          ]}
+          onPress={openTutorial}
+        >
+          <ThemedText style={styles.settingLabel}>How to Play</ThemedText>
+          <View style={styles.iconContainer}>
+            <Ionicons
+              name="help-circle-outline"
+              size={20}
+              color={Colors[colorScheme ?? 'light'].tint}
             />
           </View>
         </TouchableOpacity>
@@ -120,6 +195,8 @@ export default function SettingsScreen() {
       <ThemedView style={styles.versionContainer}>
         <ThemedText style={[styles.versionText, { opacity: 0.6 }]}>Scripture Mastery v1.0.0</ThemedText>
       </ThemedView>
+
+      <TutorialModal visible={showTutorial} onDismiss={dismissTutorial} />
     </SafeAreaView>
   );
 }
@@ -189,5 +266,26 @@ const styles = StyleSheet.create({
   },
   versionText: {
     fontSize: 14,
+  },
+  themeContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    padding: 12,
+    borderTopWidth: 1,
+    borderBottomWidth: 1,
+  },
+  themeOption: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    borderRadius: 12,
+    borderWidth: 2,
+    borderColor: 'transparent',
+  },
+  themeLabel: {
+    fontSize: 14,
+    fontWeight: '500',
+    marginTop: 6,
   },
 }); 

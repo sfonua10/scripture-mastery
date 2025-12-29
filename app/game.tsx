@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import {
   StyleSheet,
   TextInput,
@@ -9,7 +9,10 @@ import {
   Platform,
   View,
   Linking,
-  ScrollView, // Import ScrollView component
+  ScrollView,
+  Text,
+  Share,
+  Image,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { router, useLocalSearchParams, Stack } from "expo-router";
@@ -27,6 +30,11 @@ import {
   checkGuess,
 } from "@/utils/scriptureUtils";
 import { Ionicons } from "@expo/vector-icons";
+import ConfettiCannon from "react-native-confetti-cannon";
+import { captureRef } from "react-native-view-shot";
+import * as Sharing from "expo-sharing";
+
+const TOTAL_QUESTIONS = 10;
 
 export default function GameScreen() {
   const { mode } = useLocalSearchParams<{ mode: GameMode }>();
@@ -39,11 +47,29 @@ export default function GameScreen() {
   const [hasGuessed, setHasGuessed] = useState(false);
   const [isCorrect, setIsCorrect] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [questionCount, setQuestionCount] = useState(1);
+  const [correctCount, setCorrectCount] = useState(0);
+  const [sessionComplete, setSessionComplete] = useState(false);
+  const [showSummaryCard, setShowSummaryCard] = useState(false);
+  const shareCardRef = useRef<View>(null);
 
   useEffect(() => {
     // Select a random scripture when the component mounts
     setCurrentScripture(getRandomScripture());
   }, []);
+
+  // Delay showing the summary card to let confetti play first
+  useEffect(() => {
+    if (sessionComplete && correctCount >= 8) {
+      const timer = setTimeout(() => {
+        setShowSummaryCard(true);
+      }, 1500);
+      return () => clearTimeout(timer);
+    } else if (sessionComplete) {
+      // No confetti, show card immediately
+      setShowSummaryCard(true);
+    }
+  }, [sessionComplete, correctCount]);
 
   const handleSubmitGuess = async () => {
     if (!currentScripture) return;
@@ -64,8 +90,9 @@ export default function GameScreen() {
 
       setLoading(false);
 
-      // Provide haptic feedback based on result
+      // Track correct answers
       if (correct) {
+        setCorrectCount(prev => prev + 1);
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       } else {
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
@@ -76,11 +103,47 @@ export default function GameScreen() {
   const handleNextScripture = () => {
     if (!currentScripture) return;
 
+    // Check if session is complete
+    if (questionCount >= TOTAL_QUESTIONS) {
+      setSessionComplete(true);
+      return;
+    }
+
     // Select a new random scripture
     setCurrentScripture(getNextRandomScripture(currentScripture));
     setUserGuess("");
     setHasGuessed(false);
     setIsCorrect(false);
+    setQuestionCount(prev => prev + 1);
+  };
+
+  const handlePlayAgain = () => {
+    setQuestionCount(1);
+    setCorrectCount(0);
+    setSessionComplete(false);
+    setShowSummaryCard(false);
+    setCurrentScripture(getRandomScripture());
+    setUserGuess("");
+    setHasGuessed(false);
+    setIsCorrect(false);
+  };
+
+  const handleShare = async () => {
+    const APP_STORE_LINK = 'https://apps.apple.com/us/app/scripture-mastery-pro/id6742937573';
+    const message = `I got ${correctCount}/${TOTAL_QUESTIONS} on Scripture Mastery! Can you beat my score?\n${APP_STORE_LINK}`;
+
+    try {
+      const uri = await captureRef(shareCardRef, {
+        format: 'png',
+        quality: 1,
+      });
+      await Sharing.shareAsync(uri, {
+        dialogTitle: message,
+      });
+    } catch (error) {
+      // Fallback to text share
+      await Share.share({ message });
+    }
   };
 
   const getPlaceholderText = () => {
@@ -133,6 +196,12 @@ export default function GameScreen() {
     }
   };
 
+  const getScoreColor = () => {
+    if (correctCount >= 8) return { bg: "#e6f7e6", text: "#4CAF50" }; // green
+    if (correctCount >= 5) return { bg: "#fff8e6", text: "#FF9800" }; // yellow/orange
+    return { bg: "#ffebee", text: "#F44336" }; // red
+  };
+
   if (!currentScripture) {
     return (
       <SafeAreaView style={[styles.container, styles.loadingContainer]}>
@@ -148,7 +217,24 @@ export default function GameScreen() {
     <SafeAreaView style={styles.container} edges={["left", "right"]}>
       <Stack.Screen
         options={{
-          title: getDifficultyTitle(),
+          headerTitle: () => (
+            <View style={{ alignItems: 'center' }}>
+              <Text style={{
+                color: Colors[colorScheme ?? "light"].text,
+                fontSize: 17,
+                fontWeight: '600'
+              }}>
+                {getDifficultyTitle()}
+              </Text>
+              <Text style={{
+                color: Colors[colorScheme ?? "light"].text,
+                fontSize: 12,
+                opacity: 0.6
+              }}>
+                {sessionComplete ? "Complete!" : `Question ${questionCount} of ${TOTAL_QUESTIONS}`}
+              </Text>
+            </View>
+          ),
           headerBackTitle: "Home",
           headerStyle: {
             backgroundColor: Colors[colorScheme ?? "light"].background,
@@ -158,6 +244,120 @@ export default function GameScreen() {
         }}
       />
 
+      {sessionComplete ? (
+        <ThemedView style={styles.summaryContainer}>
+          {correctCount >= 8 && (
+            <ConfettiCannon
+              count={200}
+              origin={{ x: -10, y: 0 }}
+              autoStart={true}
+              fadeOut={true}
+            />
+          )}
+
+          {showSummaryCard && (
+            <>
+              {/* Hidden shareable card for capturing */}
+              <View style={styles.shareCardWrapper}>
+                <View ref={shareCardRef} style={styles.shareCard}>
+                  {/* Image section with gradient overlay */}
+                  <View style={styles.shareImageContainer}>
+                    <Image
+                      source={require('@/assets/images/scriptorian.jpeg')}
+                      style={styles.shareCardBanner}
+                    />
+                    <LinearGradient
+                      colors={['transparent', 'rgba(0,0,0,0.7)']}
+                      style={styles.shareImageOverlay}
+                    />
+                  </View>
+
+                  {/* Floating score circle */}
+                  <View style={[styles.shareScoreCircle, { backgroundColor: getScoreColor().bg, borderColor: '#fff' }]}>
+                    <Text style={[styles.shareScoreText, { color: getScoreColor().text }]}>
+                      {correctCount}/{TOTAL_QUESTIONS}
+                    </Text>
+                  </View>
+
+                  {/* Content section */}
+                  <View style={styles.shareCardContent}>
+                    <Text style={styles.shareCardMessage}>CAN YOU BEAT ME?</Text>
+                    <Text style={styles.shareCardDifficulty}>{getDifficultyTitle()}</Text>
+
+                    {/* Bottom bar with icon, name, and App Store badge */}
+                    <View style={styles.shareBottomBar}>
+                      <Image
+                        source={require('@/assets/icons/ios-light.png')}
+                        style={styles.shareAppIcon}
+                      />
+                      <Text style={styles.shareAppName}>Scripture Mastery Pro</Text>
+                      <View style={styles.appStoreBadge}>
+                        <Ionicons name="logo-apple" size={12} color="#fff" />
+                        <Text style={styles.appStoreBadgeText}>App Store</Text>
+                      </View>
+                    </View>
+                  </View>
+                </View>
+              </View>
+
+          <View style={[styles.summaryCard, { backgroundColor: Colors[colorScheme ?? "light"].card }]}>
+            <ThemedText style={styles.summaryTitle}>Session Complete!</ThemedText>
+            <View style={[styles.scoreCircle, { backgroundColor: getScoreColor().bg }]}>
+              <ThemedText style={[styles.scoreText, { color: getScoreColor().text }]}>
+                {correctCount}/{TOTAL_QUESTIONS}
+              </ThemedText>
+            </View>
+            <ThemedText style={styles.summaryMessage}>
+              {correctCount === TOTAL_QUESTIONS ? "Perfect score!" :
+               correctCount >= 8 ? "Great job!" :
+               correctCount >= 5 ? "Good effort!" :
+               "Keep practicing!"}
+            </ThemedText>
+
+            <View style={styles.summaryButtons}>
+              <TouchableOpacity
+                style={styles.playAgainButtonContainer}
+                onPress={handlePlayAgain}
+              >
+                <LinearGradient
+                  colors={
+                    colorScheme === 'dark'
+                      ? ['#1a7e7e', '#0a5e5e']
+                      : ['#0a9ea4', '#087d7a']
+                  }
+                  style={styles.playAgainButton}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 0 }}
+                >
+                  <ThemedText style={styles.playAgainButtonText}>Play Again</ThemedText>
+                </LinearGradient>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.shareButtonContainer}
+                onPress={handleShare}
+              >
+                <View style={[styles.shareButton, { borderColor: Colors[colorScheme ?? "light"].tint }]}>
+                  <ThemedText style={[styles.shareButtonText, { color: Colors[colorScheme ?? "light"].tint }]}>
+                    Share Score
+                  </ThemedText>
+                </View>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.homeButtonContainer}
+                onPress={() => router.back()}
+              >
+                <View style={[styles.homeButton, { borderColor: Colors[colorScheme ?? "light"].border }]}>
+                  <ThemedText style={styles.homeButtonText}>Home</ThemedText>
+                </View>
+              </TouchableOpacity>
+            </View>
+          </View>
+            </>
+          )}
+        </ThemedView>
+      ) : (
       <KeyboardAvoidingView
         behavior={Platform.OS === "ios" ? "padding" : "height"}
         style={styles.container}
@@ -346,13 +546,14 @@ export default function GameScreen() {
                 end={{ x: 1, y: 0 }}
               >
                 <ThemedText style={styles.nextButtonText}>
-                  Next Scripture
+                  {questionCount >= TOTAL_QUESTIONS ? "See Results" : "Next Scripture"}
                 </ThemedText>
               </LinearGradient>
             </TouchableOpacity>
           </ThemedView>
         )}
       </KeyboardAvoidingView>
+      )}
     </SafeAreaView>
   );
 }
@@ -545,5 +746,203 @@ const styles = StyleSheet.create({
   fullReferenceIcon: {
     marginLeft: 3,
     color: "#888888",
+  },
+  // Summary screen styles
+  summaryContainer: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 20,
+  },
+  summaryCard: {
+    width: "100%",
+    borderRadius: 16,
+    padding: 30,
+    alignItems: "center",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  summaryTitle: {
+    fontSize: 24,
+    fontWeight: "bold",
+    marginBottom: 20,
+  },
+  scoreCircle: {
+    width: 140,
+    height: 140,
+    borderRadius: 70,
+    justifyContent: "center",
+    alignItems: "center",
+    marginBottom: 20,
+  },
+  scoreText: {
+    fontSize: 36,
+    fontWeight: "bold",
+    lineHeight: 44,
+  },
+  summaryMessage: {
+    fontSize: 18,
+    fontFamily: "Times New Roman",
+  },
+  summaryButtons: {
+    width: "100%",
+    marginTop: 24,
+    gap: 12,
+  },
+  playAgainButtonContainer: {
+    width: "100%",
+    borderRadius: 8,
+    overflow: "hidden",
+    elevation: 3,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+  },
+  playAgainButton: {
+    width: "100%",
+    padding: 15,
+    alignItems: "center",
+  },
+  playAgainButtonText: {
+    color: "white",
+    fontSize: 16,
+    fontWeight: "bold",
+  },
+  homeButtonContainer: {
+    width: "100%",
+  },
+  homeButton: {
+    width: "100%",
+    padding: 15,
+    alignItems: "center",
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  homeButtonText: {
+    fontSize: 16,
+    fontWeight: "500",
+  },
+  shareButtonContainer: {
+    width: "100%",
+  },
+  shareButton: {
+    width: "100%",
+    padding: 15,
+    alignItems: "center",
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  shareButtonText: {
+    fontSize: 16,
+    fontWeight: "600",
+  },
+  // Hidden shareable card styles
+  shareCardWrapper: {
+    position: 'absolute',
+    left: -9999,
+    top: -9999,
+  },
+  shareCard: {
+    width: 350,
+    borderRadius: 20,
+    overflow: 'hidden',
+    backgroundColor: '#ffffff',
+  },
+  shareImageContainer: {
+    position: 'relative',
+    width: '100%',
+    height: 220,
+  },
+  shareCardBanner: {
+    width: '100%',
+    height: '100%',
+    resizeMode: 'cover',
+  },
+  shareImageOverlay: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    height: '60%',
+  },
+  shareScoreCircle: {
+    width: 110,
+    height: 110,
+    borderRadius: 55,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 4,
+    position: 'absolute',
+    top: 165,
+    alignSelf: 'center',
+    left: '50%',
+    marginLeft: -55,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 8,
+    zIndex: 10,
+  },
+  shareScoreText: {
+    fontSize: 32,
+    fontWeight: 'bold',
+  },
+  shareCardContent: {
+    paddingTop: 70,
+    paddingBottom: 20,
+    paddingHorizontal: 20,
+    alignItems: 'center',
+    backgroundColor: '#fff',
+  },
+  shareCardMessage: {
+    fontSize: 24,
+    fontWeight: '800',
+    color: '#0a9ea4',
+    letterSpacing: 1,
+    marginBottom: 4,
+  },
+  shareCardDifficulty: {
+    fontSize: 12,
+    fontWeight: '400',
+    color: '#999',
+    marginBottom: 20,
+    textTransform: 'lowercase',
+  },
+  shareBottomBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    width: '100%',
+  },
+  shareAppIcon: {
+    width: 28,
+    height: 28,
+    borderRadius: 6,
+  },
+  shareAppName: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#333',
+    flex: 1,
+  },
+  appStoreBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#000',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 5,
+    gap: 4,
+  },
+  appStoreBadgeText: {
+    color: '#fff',
+    fontSize: 10,
+    fontWeight: '500',
   },
 });
