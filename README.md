@@ -1,23 +1,32 @@
-# Scripture Mastery App
+# Scripture Mastery Pro
 
-A mobile application that tests users' knowledge of scriptures from the King James Bible, Book of Mormon, Doctrine & Covenants, and Pearl of Great Price.
+A mobile app that tests your knowledge of scriptures from the King James Bible, Book of Mormon, Doctrine & Covenants, and Pearl of Great Price.
 
-## App Overview
+## Overview
 
-Scripture Mastery is designed to help users improve their knowledge of LDS scriptures. The core gameplay involves showing users a scripture passage and asking them to identify its source at varying levels of difficulty.
+Scripture Mastery Pro helps users improve their knowledge of LDS scriptures through a quiz-style game. See a scripture passage, guess its source, and track your progress through 10-question sessions.
 
 ## Features
 
 ### Game Modes
-1. **Easy Mode**: Users guess only the book (e.g., "Matthew" or "1 Nephi")
-2. **Medium Mode**: Users guess the book and chapter (e.g., "John 3")
-3. **Hard Mode**: Users guess the book, chapter, and verse (e.g., "Alma 32:21")
+- **Easy Mode:** Guess only the book (e.g., "Matthew" or "1 Nephi")
+- **Medium Mode:** Guess the book and chapter (e.g., "John 3")
+- **Hard Mode:** Guess the book, chapter, and verse (e.g., "Alma 32:21")
 
-### Key Features
-- Clean, distraction-free design
-- Serif font for scripture text
-- Haptic feedback for correct/incorrect answers
-- Light/dark mode support
+### Gameplay
+- 10-question sessions with real-time scoring
+- Immediate feedback with haptic vibrations
+- Confetti celebration for high scores (8+/10)
+- Color-coded score feedback (green/yellow/red)
+
+### Social Sharing
+- Share your scores with a branded score card
+- Export score images to social media
+
+### Customization
+- Light, dark, and system theme modes
+- Clean, distraction-free design with serif typography
+- Built-in "How to Play" tutorial
 
 ## Getting Started
 
@@ -33,24 +42,42 @@ Scripture Mastery is designed to help users improve their knowledge of LDS scrip
    npx expo start
    ```
 
-## Development
+3. Run on device/simulator
 
-This app is built with:
+   ```bash
+   npx expo run:ios      # iOS
+   npx expo run:android  # Android
+   ```
+
+## Tech Stack
+
 - React Native with Expo
 - TypeScript
 - Expo Router for navigation
+- React Context for state management
 
-### Project Structure
+## Project Structure
 
-- `/app`: Main application screens and navigation
-- `/components`: Reusable UI components
-- `/constants`: App-wide constants like colors
-- `/data`: Scripture data and services
-- `/types`: TypeScript type definitions
+```
+/app          # Screens and navigation (Expo Router)
+/components   # Reusable UI components
+/contexts     # React Context providers
+/data         # Scripture data files
+/hooks        # Custom React hooks
+/utils        # Helper functions
+/types        # TypeScript type definitions
+/constants    # Colors and theme constants
+/assets       # Icons and images
+```
 
-## Data Source
+## Scripture Data
 
-The scripture data is currently using placeholder content. In a production version, it would use the [bcbooks/scriptures-json](https://github.com/bcbooks/scriptures-json) repository or a similar data source.
+The app includes 500+ scripture passages from:
+- Old Testament (King James Bible)
+- New Testament (King James Bible)
+- Book of Mormon
+- Doctrine & Covenants
+- Pearl of Great Price
 
 ## Future Enhancements
 
@@ -60,7 +87,6 @@ The scripture data is currently using placeholder content. In a production versi
 - Multi-player or competitive modes
 - Detailed scripture study tools
 - Bookmarking favorite scriptures
-- Social sharing features
 
 ## License
 

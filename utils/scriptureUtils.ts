@@ -50,6 +50,19 @@ const normalizeBookName = (bookName: string): string => {
     return 'd&c';
   }
 
+  // Handle Joseph Smith—History variations
+  const noDashes = noSpaces.replace(/[-—–]/g, ''); // Remove all dash types
+  if (
+    noDashes === 'jsh' ||
+    noDashes === 'jshistory' ||
+    noDashes === 'josephsmithhistory' ||
+    noSpaces.startsWith('js-h') ||
+    noSpaces.startsWith('js—h') ||
+    (noDashes.includes('josephsmith') && noDashes.includes('history'))
+  ) {
+    return 'joseph smith—history';
+  }
+
   return normalized;
 };
 

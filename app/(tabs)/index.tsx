@@ -12,7 +12,7 @@ import { useColorScheme } from '@/hooks/useColorScheme';
 import { useTutorial } from '@/hooks/useTutorial';
 
 // Import images using ES6 imports
-const darkIcon = require('@/assets/icons/ios-dark.png');
+const darkIcon = require('@/assets/icons/splash-icon-light.png');
 const lightIcon = require('@/assets/icons/ios-light.png');
 
 export default function HomeScreen() {

@@ -13,7 +13,7 @@ interface ThemeContextType {
 
 const THEME_STORAGE_KEY = '@scripture_mastery_theme';
 
-const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
+export const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
   const systemColorScheme = useSystemColorScheme();

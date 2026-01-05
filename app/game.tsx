@@ -21,8 +21,11 @@ import { LinearGradient } from "expo-linear-gradient";
 
 import { ThemedText } from "@/components/ThemedText";
 import { ThemedView } from "@/components/ThemedView";
+import { LeaderboardPrompt } from "@/components/LeaderboardPrompt";
 import { Colors } from "@/constants/Colors";
 import { useColorScheme } from "@/hooks/useColorScheme";
+import { useAuth } from "@/contexts/AuthContext";
+import { useLeaderboard } from "@/hooks/useLeaderboard";
 import { GameMode, Scripture } from "@/types/scripture";
 import {
   getRandomScripture,
@@ -34,11 +37,23 @@ import ConfettiCannon from "react-native-confetti-cannon";
 import { captureRef } from "react-native-view-shot";
 import * as Sharing from "expo-sharing";
 
-const TOTAL_QUESTIONS = 10;
+const TOTAL_QUESTIONS = 3;
+
+const MIN_SCORE_FOR_LEADERBOARD = 0; // Minimum score to prompt for leaderboard
 
 export default function GameScreen() {
   const { mode } = useLocalSearchParams<{ mode: GameMode }>();
   const colorScheme = useColorScheme();
+
+  // Auth and leaderboard hooks
+  const {
+    nickname,
+    hasJoinedLeaderboard,
+    isNewHighScore,
+    updateHighScore,
+    joinLeaderboard
+  } = useAuth();
+  const { submitScore } = useLeaderboard(mode as GameMode);
 
   const [currentScripture, setCurrentScripture] = useState<Scripture | null>(
     null
@@ -51,6 +66,8 @@ export default function GameScreen() {
   const [correctCount, setCorrectCount] = useState(0);
   const [sessionComplete, setSessionComplete] = useState(false);
   const [showSummaryCard, setShowSummaryCard] = useState(false);
+  const [showLeaderboardPrompt, setShowLeaderboardPrompt] = useState(false);
+  const [isHighScore, setIsHighScore] = useState(false);
   const shareCardRef = useRef<View>(null);
 
   useEffect(() => {
@@ -58,18 +75,44 @@ export default function GameScreen() {
     setCurrentScripture(getRandomScripture());
   }, []);
 
-  // Delay showing the summary card to let confetti play first
+  // Handle session completion - check for high score and show leaderboard prompt
   useEffect(() => {
-    if (sessionComplete && correctCount >= 8) {
-      const timer = setTimeout(() => {
+    if (sessionComplete) {
+      const checkHighScore = async () => {
+        const newHighScore = isNewHighScore(mode as GameMode, correctCount);
+        setIsHighScore(newHighScore);
+
+        // Update local high score
+        if (newHighScore) {
+          await updateHighScore(mode as GameMode, correctCount);
+        }
+
+        // Determine if we should show leaderboard prompt
+        const shouldPrompt = correctCount >= MIN_SCORE_FOR_LEADERBOARD &&
+          (newHighScore || !hasJoinedLeaderboard);
+
+        if (shouldPrompt) {
+          // Show prompt after a short delay (or after confetti for high scores)
+          const delay = correctCount >= 8 ? 1500 : 500;
+          setTimeout(() => {
+            setShowLeaderboardPrompt(true);
+          }, delay);
+        }
+      };
+
+      checkHighScore();
+
+      // Delay showing the summary card to let confetti play first
+      if (correctCount >= 8) {
+        const timer = setTimeout(() => {
+          setShowSummaryCard(true);
+        }, 1500);
+        return () => clearTimeout(timer);
+      } else {
         setShowSummaryCard(true);
-      }, 1500);
-      return () => clearTimeout(timer);
-    } else if (sessionComplete) {
-      // No confetti, show card immediately
-      setShowSummaryCard(true);
+      }
     }
-  }, [sessionComplete, correctCount]);
+  }, [sessionComplete, correctCount, mode, isNewHighScore, updateHighScore, hasJoinedLeaderboard]);
 
   const handleSubmitGuess = async () => {
     if (!currentScripture) return;
@@ -122,10 +165,31 @@ export default function GameScreen() {
     setCorrectCount(0);
     setSessionComplete(false);
     setShowSummaryCard(false);
+    setShowLeaderboardPrompt(false);
+    setIsHighScore(false);
     setCurrentScripture(getRandomScripture());
     setUserGuess("");
     setHasGuessed(false);
     setIsCorrect(false);
+  };
+
+  const handleLeaderboardSubmit = async (submittedNickname: string) => {
+    try {
+      if (!hasJoinedLeaderboard) {
+        // First time joining - create profile and submit
+        await joinLeaderboard(submittedNickname, mode as GameMode, correctCount);
+      }
+      // Submit score to leaderboard
+      await submitScore(correctCount, submittedNickname);
+      setShowLeaderboardPrompt(false);
+    } catch (error) {
+      console.error('Failed to submit to leaderboard:', error);
+      Alert.alert('Error', 'Failed to save score. Please try again.');
+    }
+  };
+
+  const handleLeaderboardSkip = () => {
+    setShowLeaderboardPrompt(false);
   };
 
   const handleShare = async () => {
@@ -345,6 +409,18 @@ export default function GameScreen() {
               </TouchableOpacity>
 
               <TouchableOpacity
+                style={styles.leaderboardButtonContainer}
+                onPress={() => router.push('/(tabs)/leaderboard')}
+              >
+                <View style={[styles.leaderboardButton, { borderColor: Colors[colorScheme ?? "light"].tint }]}>
+                  <Ionicons name="trophy-outline" size={18} color={Colors[colorScheme ?? "light"].tint} style={{ marginRight: 6 }} />
+                  <ThemedText style={[styles.leaderboardButtonText, { color: Colors[colorScheme ?? "light"].tint }]}>
+                    View Leaderboard
+                  </ThemedText>
+                </View>
+              </TouchableOpacity>
+
+              <TouchableOpacity
                 style={styles.homeButtonContainer}
                 onPress={() => router.back()}
               >
@@ -356,6 +432,19 @@ export default function GameScreen() {
           </View>
             </>
           )}
+
+          <LeaderboardPrompt
+            visible={showLeaderboardPrompt}
+            score={correctCount}
+            totalQuestions={TOTAL_QUESTIONS}
+            difficulty={mode as GameMode}
+            isNewHighScore={isHighScore}
+            hasNickname={!!nickname}
+            nickname={nickname}
+            onClose={() => setShowLeaderboardPrompt(false)}
+            onSubmit={handleLeaderboardSubmit}
+            onSkip={handleLeaderboardSkip}
+          />
         </ThemedView>
       ) : (
       <KeyboardAvoidingView
@@ -497,6 +586,8 @@ export default function GameScreen() {
               value={userGuess}
               onChangeText={setUserGuess}
               autoCapitalize="words"
+              returnKeyType="go"
+              onSubmitEditing={handleSubmitGuess}
             />
             <TouchableOpacity
               style={styles.submitButtonContainer}
@@ -837,6 +928,22 @@ const styles = StyleSheet.create({
     borderWidth: 1,
   },
   shareButtonText: {
+    fontSize: 16,
+    fontWeight: "600",
+  },
+  leaderboardButtonContainer: {
+    width: "100%",
+  },
+  leaderboardButton: {
+    width: "100%",
+    padding: 15,
+    alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  leaderboardButtonText: {
     fontSize: 16,
     fontWeight: "600",
   },
