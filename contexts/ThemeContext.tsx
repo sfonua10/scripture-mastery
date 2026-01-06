@@ -9,32 +9,44 @@ interface ThemeContextType {
   preference: ThemePreference;
   setPreference: (preference: ThemePreference) => void;
   effectiveColorScheme: ColorScheme;
+  soundEnabled: boolean;
+  setSoundEnabled: (enabled: boolean) => void;
 }
 
 const THEME_STORAGE_KEY = '@scripture_mastery_theme';
+const SOUND_STORAGE_KEY = '@scripture_mastery_sound';
 
 export const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
   const systemColorScheme = useSystemColorScheme();
   const [preference, setPreferenceState] = useState<ThemePreference>('system');
+  const [soundEnabled, setSoundEnabledState] = useState(true);
   const [isLoaded, setIsLoaded] = useState(false);
 
   useEffect(() => {
-    const loadThemePreference = async () => {
+    const loadPreferences = async () => {
       try {
-        const stored = await AsyncStorage.getItem(THEME_STORAGE_KEY);
-        if (stored === 'light' || stored === 'dark' || stored === 'system') {
-          setPreferenceState(stored);
+        const [storedTheme, storedSound] = await Promise.all([
+          AsyncStorage.getItem(THEME_STORAGE_KEY),
+          AsyncStorage.getItem(SOUND_STORAGE_KEY),
+        ]);
+
+        if (storedTheme === 'light' || storedTheme === 'dark' || storedTheme === 'system') {
+          setPreferenceState(storedTheme);
+        }
+
+        if (storedSound !== null) {
+          setSoundEnabledState(storedSound === 'true');
         }
       } catch (error) {
-        console.error('Error loading theme preference:', error);
+        console.error('Error loading preferences:', error);
       } finally {
         setIsLoaded(true);
       }
     };
 
-    loadThemePreference();
+    loadPreferences();
   }, []);
 
   const setPreference = useCallback(async (newPreference: ThemePreference) => {
@@ -46,6 +58,15 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
+  const setSoundEnabled = useCallback(async (enabled: boolean) => {
+    setSoundEnabledState(enabled);
+    try {
+      await AsyncStorage.setItem(SOUND_STORAGE_KEY, String(enabled));
+    } catch (error) {
+      console.error('Error saving sound preference:', error);
+    }
+  }, []);
+
   const effectiveColorScheme: ColorScheme =
     preference === 'system' ? (systemColorScheme ?? 'light') : preference;
 
@@ -54,7 +75,7 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
   }
 
   return (
-    <ThemeContext.Provider value={{ preference, setPreference, effectiveColorScheme }}>
+    <ThemeContext.Provider value={{ preference, setPreference, effectiveColorScheme, soundEnabled, setSoundEnabled }}>
       {children}
     </ThemeContext.Provider>
   );

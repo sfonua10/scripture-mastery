@@ -4,6 +4,7 @@ import React, {
   useState,
   useEffect,
   useCallback,
+  useRef,
   ReactNode,
 } from 'react';
 import {
@@ -20,17 +21,33 @@ import {
   setDoc,
   updateDoc,
   serverTimestamp,
+  FieldValue,
 } from 'firebase/firestore';
 import { auth, db, GoogleAuthProvider, GOOGLE_WEB_CLIENT_ID, GOOGLE_IOS_CLIENT_ID } from '@/config/firebase';
 import { UserProfile, GameMode, HighScores, AuthProvider as AuthProviderType } from '@/types/scripture';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Google from 'expo-auth-session/providers/google';
+import { AuthSessionResult } from 'expo-auth-session';
 import * as WebBrowser from 'expo-web-browser';
 import * as AppleAuthentication from 'expo-apple-authentication';
 import { Platform } from 'react-native';
+import {
+  ExtractedProfileData,
+  extractGoogleProfileFromIdToken,
+} from '@/utils/jwtUtils';
 
 // Required for Google auth session to complete properly on web
 WebBrowser.maybeCompleteAuthSession();
+
+// Type guard for Firebase errors
+function isFirebaseError(error: unknown): error is { code: string; message: string } {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'code' in error &&
+    typeof (error as { code: unknown }).code === 'string'
+  );
+}
 
 const LOCAL_HIGH_SCORES_KEY = '@scripture_mastery_high_scores';
 
@@ -51,12 +68,13 @@ interface AuthContextType {
   googleDisplayName: string | null;
   googleEmail: string | null;
   isGoogleLoading: boolean;
-  promptGoogleSignIn: () => Promise<void>;
+  promptGoogleSignIn: () => Promise<AuthSessionResult | null>;
+  signInWithGoogleAndGetProfile: () => Promise<ExtractedProfileData>;
   linkGoogleAccount: () => Promise<void>;
   // Apple auth
   isAppleAvailable: boolean;
   isAppleLoading: boolean;
-  promptAppleSignIn: () => Promise<void>;
+  promptAppleSignIn: () => Promise<{ success: boolean; profile?: ExtractedProfileData }>;
   linkAppleAccount: () => Promise<void>;
   // Sign out
   signOut: () => Promise<void>;
@@ -75,6 +93,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [isAppleLoading, setIsAppleLoading] = useState(false);
   const [isAppleAvailable, setIsAppleAvailable] = useState(false);
 
+  // Ref for pending Google sign-in promise resolution
+  const signInResolverRef = useRef<{
+    resolve: (profile: ExtractedProfileData) => void;
+    reject: (error: Error) => void;
+  } | null>(null);
+
   // Check Apple Sign-In availability
   useEffect(() => {
     const checkAppleAvailability = async () => {
@@ -86,56 +110,79 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     checkAppleAvailability();
   }, []);
 
-  // Google OAuth setup
+  // Google OAuth setup - explicitly request profile scope for photo URL
   const [request, response, promptAsync] = Google.useIdTokenAuthRequest({
     iosClientId: GOOGLE_IOS_CLIENT_ID,
     webClientId: GOOGLE_WEB_CLIENT_ID, // Used for Firebase token exchange
+    scopes: ['openid', 'profile', 'email'],
   });
+
+  // Handler for Google credential - wrapped in useCallback to track dependencies
+  const handleGoogleCredential = useCallback(async (idToken: string) => {
+    try {
+      const credential = GoogleAuthProvider.credential(idToken);
+
+      // Extract profile data from the Google ID token (JWT)
+      const googleProfile = extractGoogleProfileFromIdToken(idToken);
+
+      if (user?.isAnonymous) {
+        // Link anonymous account to Google - preserves UID and data
+        const result = await linkWithCredential(user, credential);
+        await updateUserWithProviderInfo(result.user, 'google', googleProfile);
+      } else {
+        // Fresh sign-in with Google
+        const result = await signInWithCredential(auth, credential);
+        await updateUserWithProviderInfo(result.user, 'google', googleProfile);
+      }
+
+      // Resolve pending promise with profile data
+      signInResolverRef.current?.resolve(googleProfile);
+    } catch (error) {
+      if (isFirebaseError(error) && error.code === 'auth/credential-already-in-use') {
+        // This Google account is already linked to another user
+        // Sign in with the existing account instead
+        console.warn('Google account already linked to another user');
+        const newCredential = GoogleAuthProvider.credential(idToken);
+        const googleProfile = extractGoogleProfileFromIdToken(idToken);
+        const result = await signInWithCredential(auth, newCredential);
+        await updateUserWithProviderInfo(result.user, 'google', googleProfile);
+
+        // Resolve pending promise with profile data
+        signInResolverRef.current?.resolve(googleProfile);
+      } else {
+        console.error('Error handling Google credential:', error);
+        // Reject pending promise on error
+        signInResolverRef.current?.reject(error instanceof Error ? error : new Error(String(error)));
+        throw error;
+      }
+    } finally {
+      signInResolverRef.current = null;
+      setIsGoogleLoading(false);
+    }
+  }, [user]);
 
   // Handle Google OAuth response
   useEffect(() => {
     if (response?.type === 'success') {
       const { id_token } = response.params;
       handleGoogleCredential(id_token);
-    } else if (response?.type === 'error') {
-      console.error('Google sign-in error:', response.error);
-      setIsGoogleLoading(false);
-    } else if (response?.type === 'dismiss') {
+    } else if (response) {
+      // Handle all non-success cases: error, dismiss, cancel, locked
+      if (response.type === 'error') {
+        console.error('Google sign-in error:', response.error);
+      }
+      // Reject pending promise on cancel/error
+      signInResolverRef.current?.reject(new Error(response.type));
+      signInResolverRef.current = null;
       setIsGoogleLoading(false);
     }
-  }, [response]);
-
-  const handleGoogleCredential = async (idToken: string) => {
-    try {
-      const credential = GoogleAuthProvider.credential(idToken);
-
-      if (user?.isAnonymous) {
-        // Link anonymous account to Google - preserves UID and data
-        const result = await linkWithCredential(user, credential);
-        await updateUserWithProviderInfo(result.user, 'google');
-      } else {
-        // Fresh sign-in with Google
-        const result = await signInWithCredential(auth, credential);
-        await updateUserWithProviderInfo(result.user, 'google');
-      }
-    } catch (error: any) {
-      if (error.code === 'auth/credential-already-in-use') {
-        // This Google account is already linked to another user
-        // Sign in with the existing account instead
-        console.warn('Google account already linked to another user');
-        const credential = GoogleAuthProvider.credential(idToken);
-        await signInWithCredential(auth, credential);
-      } else {
-        console.error('Error handling Google credential:', error);
-        throw error;
-      }
-    } finally {
-      setIsGoogleLoading(false);
-    }
-  };
+  }, [response, handleGoogleCredential]);
 
   // Apple Sign-In handler
-  const handleAppleSignIn = async (): Promise<{ success: boolean }> => {
+  const handleAppleSignIn = async (): Promise<{
+    success: boolean;
+    profile?: ExtractedProfileData;
+  }> => {
     setIsAppleLoading(true);
     try {
       const appleCredential = await AppleAuthentication.signInAsync({
@@ -156,35 +203,42 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         idToken: identityToken,
       });
 
-      // Get display name from Apple (only provided on first sign-in)
+      // Build extracted profile from Apple credential
+      // Note: Apple only provides name/email on first sign-in
       const fullName = appleCredential.fullName;
-      const displayName = fullName
-        ? `${fullName.givenName || ''} ${fullName.familyName || ''}`.trim()
-        : null;
+      const appleProfile: ExtractedProfileData = {
+        displayName: fullName
+          ? `${fullName.givenName || ''} ${fullName.familyName || ''}`.trim() ||
+            null
+          : null,
+        email: appleCredential.email || null,
+        photoURL: null, // Apple doesn't provide profile photos
+      };
 
       if (user?.isAnonymous) {
         // Link anonymous account to Apple - preserves UID and data
         const result = await linkWithCredential(user, credential);
-        await updateUserWithProviderInfo(result.user, 'apple', displayName);
+        await updateUserWithProviderInfo(result.user, 'apple', appleProfile);
       } else {
         // Fresh sign-in with Apple
         const result = await signInWithCredential(auth, credential);
-        await updateUserWithProviderInfo(result.user, 'apple', displayName);
+        await updateUserWithProviderInfo(result.user, 'apple', appleProfile);
       }
-      return { success: true };
-    } catch (error: any) {
-      if (error.code === 'ERR_REQUEST_CANCELED') {
-        // User canceled the sign-in
-        console.log('Apple sign-in canceled');
-        return { success: false };
-      } else if (error.code === 'auth/credential-already-in-use') {
-        // This Apple account is already linked to another user
-        console.warn('Apple account already linked to another user');
-        return { success: false };
-      } else {
-        console.error('Apple sign-in error:', error);
-        throw error;
+      return { success: true, profile: appleProfile };
+    } catch (error) {
+      if (isFirebaseError(error)) {
+        if (error.code === 'ERR_REQUEST_CANCELED') {
+          // User canceled the sign-in
+          console.log('Apple sign-in canceled');
+          return { success: false };
+        } else if (error.code === 'auth/credential-already-in-use') {
+          // This Apple account is already linked to another user
+          console.warn('Apple account already linked to another user');
+          return { success: false };
+        }
       }
+      console.error('Apple sign-in error:', error);
+      throw error;
     } finally {
       setIsAppleLoading(false);
     }
@@ -193,29 +247,37 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const updateUserWithProviderInfo = async (
     providerUser: User,
     provider: 'google' | 'apple',
-    appleDisplayName?: string | null
+    extractedProfile?: ExtractedProfileData | null
   ) => {
     const userRef = doc(db, 'users', providerUser.uid);
     const now = serverTimestamp();
 
-    // For Apple, we might not get email/displayName after the first sign-in
-    const displayName = provider === 'apple' && appleDisplayName
-      ? appleDisplayName
-      : providerUser.displayName;
+    // Priority: extracted profile data > Firebase user data > null
+    const displayName =
+      extractedProfile?.displayName || providerUser.displayName || null;
+    const email = extractedProfile?.email || providerUser.email || null;
+    const photoURL =
+      extractedProfile?.photoURL || providerUser.photoURL || null;
 
     try {
       const userSnap = await getDoc(userRef);
 
       if (userSnap.exists()) {
         // Update existing profile with provider info
-        const updateData: any = {
+        const updateData: {
+          authProvider: 'google' | 'apple' | 'anonymous';
+          lastPlayed: FieldValue;
+          email?: string;
+          displayName?: string;
+          photoURL?: string;
+        } = {
           authProvider: provider,
           lastPlayed: now,
         };
-        // Only update email/displayName if we have them
-        if (providerUser.email) updateData.email = providerUser.email;
+        // Only update fields if we have values
+        if (email) updateData.email = email;
         if (displayName) updateData.displayName = displayName;
-        if (providerUser.photoURL) updateData.photoURL = providerUser.photoURL;
+        if (photoURL) updateData.photoURL = photoURL;
 
         await updateDoc(userRef, updateData);
       } else {
@@ -228,9 +290,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           highScores: localHighScores,
           hasJoinedLeaderboard: false,
           authProvider: provider,
-          email: providerUser.email || null,
-          displayName: displayName || null,
-          photoURL: providerUser.photoURL || null,
+          email: email,
+          displayName: displayName,
+          photoURL: photoURL,
         });
       }
 
@@ -269,22 +331,34 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   // Initialize anonymous auth
   useEffect(() => {
+    let isMounted = true;
+    let currentAuthOperation: Promise<void> | null = null;
+
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
-      if (firebaseUser) {
-        setUser(firebaseUser);
-        await loadUserProfile(firebaseUser.uid);
-      } else {
-        // Sign in anonymously (silent, no user interaction)
-        try {
-          await signInAnonymously(auth);
-        } catch (error) {
-          console.error('Anonymous auth error:', error);
+      // Cancel any in-progress auth operation tracking
+      const thisOperation = (async () => {
+        if (firebaseUser) {
+          if (isMounted) setUser(firebaseUser);
+          await loadUserProfile(firebaseUser.uid);
+        } else {
+          // Sign in anonymously (silent, no user interaction)
+          try {
+            await signInAnonymously(auth);
+          } catch (error) {
+            console.error('Anonymous auth error:', error);
+          }
         }
-      }
-      setIsLoading(false);
+        if (isMounted) setIsLoading(false);
+      })();
+
+      currentAuthOperation = thisOperation;
+      await thisOperation;
     });
 
-    return unsubscribe;
+    return () => {
+      isMounted = false;
+      unsubscribe();
+    };
   }, []);
 
   const loadUserProfile = async (userId: string) => {
@@ -448,7 +522,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [user, userProfile, localHighScores, saveLocalHighScores]
   );
 
-  const promptGoogleSignIn = useCallback(async () => {
+  const promptGoogleSignIn = useCallback(async (): Promise<AuthSessionResult | null> => {
     setIsGoogleLoading(true);
     try {
       return await promptAsync();
@@ -458,6 +532,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       throw error;
     }
   }, [promptAsync]);
+
+  // Awaitable Google sign-in that returns profile data when complete
+  const signInWithGoogleAndGetProfile =
+    useCallback(async (): Promise<ExtractedProfileData> => {
+      return new Promise((resolve, reject) => {
+        signInResolverRef.current = { resolve, reject };
+        setIsGoogleLoading(true);
+        promptAsync().catch((error) => {
+          signInResolverRef.current = null;
+          setIsGoogleLoading(false);
+          reject(error);
+        });
+      });
+    }, [promptAsync]);
 
   const linkGoogleAccount = useCallback(async () => {
     if (!user?.isAnonymous) {
@@ -515,6 +603,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         googleEmail,
         isGoogleLoading,
         promptGoogleSignIn,
+        signInWithGoogleAndGetProfile,
         linkGoogleAccount,
         // Apple auth
         isAppleAvailable,

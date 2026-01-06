@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import {
   StyleSheet,
   TextInput,
@@ -13,6 +13,8 @@ import {
   Text,
   Share,
   Image,
+  AccessibilityInfo,
+  Keyboard,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { router, useLocalSearchParams, Stack } from "expo-router";
@@ -22,11 +24,16 @@ import { LinearGradient } from "expo-linear-gradient";
 import { ThemedText } from "@/components/ThemedText";
 import { ThemedView } from "@/components/ThemedView";
 import { LeaderboardPrompt } from "@/components/LeaderboardPrompt";
+import { BadgeEarnedModal } from "@/components/BadgeEarnedModal";
+import { GradientButton } from "@/components/GradientButton";
 import { Colors } from "@/constants/Colors";
 import { useColorScheme } from "@/hooks/useColorScheme";
+import { useSound } from "@/hooks/useSound";
+import { useDailyChallenge } from "@/hooks/useDailyChallenge";
 import { useAuth } from "@/contexts/AuthContext";
 import { useLeaderboard } from "@/hooks/useLeaderboard";
-import { GameMode, Scripture } from "@/types/scripture";
+import { useChallenge } from "@/hooks/useChallenge";
+import { GameMode, Scripture, DailyChallengeBadge, Challenge } from "@/types/scripture";
 import {
   getRandomScripture,
   getNextRandomScripture,
@@ -36,14 +43,578 @@ import { Ionicons } from "@expo/vector-icons";
 import ConfettiCannon from "react-native-confetti-cannon";
 import { captureRef } from "react-native-view-shot";
 import * as Sharing from "expo-sharing";
+import Animated, {
+  useSharedValue,
+  useAnimatedStyle,
+  withTiming,
+  withSpring,
+  withSequence,
+  withDelay,
+  useAnimatedReaction,
+  runOnJS,
+  Easing,
+  interpolate,
+  interpolateColor,
+  FadeIn,
+  FadeOut,
+  SlideInDown,
+} from "react-native-reanimated";
 
 const TOTAL_QUESTIONS = 3;
 
 const MIN_SCORE_FOR_LEADERBOARD = 0; // Minimum score to prompt for leaderboard
 
+// Animation constants for consistent spring physics
+const SPRING_CONFIG = {
+  damping: 15,
+  stiffness: 150,
+};
+
+const SPRING_CONFIG_BOUNCY = {
+  damping: 12,
+  stiffness: 180,
+};
+
+// Animated score text component
+interface AnimatedScoreProps {
+  animatedValue: Animated.SharedValue<number>;
+  total: number;
+  style: any;
+}
+
+function AnimatedScore({ animatedValue, total, style }: AnimatedScoreProps) {
+  const [displayValue, setDisplayValue] = React.useState(0);
+
+  // Use Reanimated's reaction instead of polling - only updates when value changes
+  useAnimatedReaction(
+    () => Math.round(animatedValue.value),
+    (currentValue, previousValue) => {
+      if (currentValue !== previousValue) {
+        runOnJS(setDisplayValue)(currentValue);
+      }
+    },
+    [animatedValue]
+  );
+
+  return (
+    <Text style={style}>
+      {displayValue}/{total}
+    </Text>
+  );
+}
+
+// Progress Dot Component with animation
+interface ProgressDotProps {
+  index: number;
+  status: 'pending' | 'correct' | 'incorrect';
+  isCurrent: boolean;
+  colorScheme: 'light' | 'dark';
+}
+
+function ProgressDot({ index, status, isCurrent, colorScheme }: ProgressDotProps) {
+  const scale = useSharedValue(isCurrent ? 1 : 0.8);
+  const opacity = useSharedValue(status === 'pending' ? 0.4 : 1);
+
+  useEffect(() => {
+    scale.value = withSpring(isCurrent ? 1.2 : (status !== 'pending' ? 1 : 0.8), SPRING_CONFIG);
+    opacity.value = withTiming(status === 'pending' && !isCurrent ? 0.4 : 1, { duration: 200 });
+  }, [isCurrent, status]);
+
+  const animatedStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: scale.value }],
+    opacity: opacity.value,
+  }));
+
+  const getColor = () => {
+    if (status === 'correct') return '#4CAF50';
+    if (status === 'incorrect') return '#F44336';
+    return colorScheme === 'dark' ? '#555' : '#ddd';
+  };
+
+  return (
+    <Animated.View
+      style={[
+        styles.progressDot,
+        { backgroundColor: getColor() },
+        isCurrent && styles.progressDotCurrent,
+        animatedStyle,
+      ]}
+      accessibilityLabel={`Question ${index + 1}: ${status === 'pending' ? 'upcoming' : status}`}
+      accessibilityRole="progressbar"
+    />
+  );
+}
+
+// Progress Indicator Component
+interface ProgressIndicatorProps {
+  currentQuestion: number;
+  totalQuestions: number;
+  answers: ('correct' | 'incorrect' | 'pending')[];
+  colorScheme: 'light' | 'dark';
+}
+
+function ProgressIndicator({ currentQuestion, totalQuestions, answers, colorScheme }: ProgressIndicatorProps) {
+  return (
+    <View
+      style={styles.progressContainer}
+      accessibilityLabel={`Question ${currentQuestion} of ${totalQuestions}`}
+      accessibilityRole="progressbar"
+    >
+      {Array.from({ length: totalQuestions }).map((_, index) => (
+        <ProgressDot
+          key={index}
+          index={index}
+          status={answers[index] || 'pending'}
+          isCurrent={index === currentQuestion - 1}
+          colorScheme={colorScheme}
+        />
+      ))}
+    </View>
+  );
+}
+
+// Animated Checkmark with pulse effect
+interface AnimatedFeedbackIconProps {
+  isCorrect: boolean;
+  colors: typeof Colors.light;
+}
+
+function AnimatedFeedbackIcon({ isCorrect, colors }: AnimatedFeedbackIconProps) {
+  const scale = useSharedValue(0);
+  const pulseScale = useSharedValue(0);
+  const pulseOpacity = useSharedValue(0.6);
+
+  useEffect(() => {
+    // Main icon animation - spring with overshoot
+    scale.value = withSpring(1, SPRING_CONFIG_BOUNCY);
+
+    // Pulse/ripple animation
+    pulseScale.value = withTiming(1.8, { duration: 400, easing: Easing.out(Easing.cubic) });
+    pulseOpacity.value = withTiming(0, { duration: 400, easing: Easing.out(Easing.cubic) });
+  }, []);
+
+  const iconStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: scale.value }],
+  }));
+
+  const pulseStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: pulseScale.value }],
+    opacity: pulseOpacity.value,
+  }));
+
+  const backgroundColor = isCorrect ? '#e6f7e6' : '#ffebee';
+  const iconColor = isCorrect ? colors.success : colors.error;
+  const pulseColor = isCorrect ? colors.success : colors.error;
+
+  return (
+    <View style={styles.iconContainer}>
+      {/* Pulse/ripple effect */}
+      <Animated.View
+        style={[
+          styles.feedbackPulse,
+          { backgroundColor: pulseColor },
+          pulseStyle,
+        ]}
+      />
+      {/* Main icon */}
+      <Animated.View
+        style={[
+          isCorrect ? styles.checkCircle : styles.xCircle,
+          { backgroundColor },
+          iconStyle,
+        ]}
+      >
+        <ThemedText style={isCorrect ? styles.checkmark : styles.xMark}>
+          {isCorrect ? '✓' : '✗'}
+        </ThemedText>
+      </Animated.View>
+    </View>
+  );
+}
+
+// Animated Result Card with shake for incorrect
+interface AnimatedResultCardProps {
+  isCorrect: boolean;
+  userGuess: string;
+  correctAnswer: string;
+  fullReference: string;
+  colors: typeof Colors.light;
+}
+
+function AnimatedResultCard({ isCorrect, userGuess, correctAnswer, fullReference, colors }: AnimatedResultCardProps) {
+  const translateX = useSharedValue(0);
+  const flashOpacity = useSharedValue(0);
+  const cardOpacity = useSharedValue(0);
+  const cardTranslateY = useSharedValue(20);
+
+  useEffect(() => {
+    // Slide in animation
+    cardOpacity.value = withTiming(1, { duration: 200 });
+    cardTranslateY.value = withSpring(0, SPRING_CONFIG);
+
+    if (!isCorrect) {
+      // Shake animation for incorrect - 3 oscillations
+      translateX.value = withSequence(
+        withTiming(-10, { duration: 50 }),
+        withTiming(10, { duration: 50 }),
+        withTiming(-8, { duration: 50 }),
+        withTiming(8, { duration: 50 }),
+        withTiming(-4, { duration: 50 }),
+        withTiming(0, { duration: 50 })
+      );
+      // Red flash overlay
+      flashOpacity.value = withSequence(
+        withTiming(0.1, { duration: 100 }),
+        withTiming(0, { duration: 100 })
+      );
+    }
+  }, [isCorrect]);
+
+  const cardStyle = useAnimatedStyle(() => ({
+    transform: [
+      { translateX: translateX.value },
+      { translateY: cardTranslateY.value },
+    ],
+    opacity: cardOpacity.value,
+  }));
+
+  const flashStyle = useAnimatedStyle(() => ({
+    opacity: flashOpacity.value,
+  }));
+
+  return (
+    <Animated.View style={[styles.resultCard, { backgroundColor: colors.card }, cardStyle]}>
+      {/* Red flash overlay for incorrect */}
+      {!isCorrect && (
+        <Animated.View
+          style={[
+            styles.flashOverlay,
+            { backgroundColor: colors.error },
+            flashStyle,
+          ]}
+        />
+      )}
+
+      <AnimatedFeedbackIcon isCorrect={isCorrect} colors={colors} />
+
+      {isCorrect ? (
+        <>
+          <ThemedText style={[styles.correctText, { color: colors.success }]}>
+            Correct!
+          </ThemedText>
+          <ThemedText style={styles.correctReference}>
+            {fullReference}
+          </ThemedText>
+        </>
+      ) : (
+        <>
+          <ThemedText style={styles.incorrectGuess}>
+            You guessed{" "}
+            <ThemedText style={[styles.userGuessText, { color: colors.error }]}>
+              {userGuess}
+            </ThemedText>
+          </ThemedText>
+          <ThemedText style={styles.correctReference}>
+            It was{" "}
+            <ThemedText style={[styles.correctAnswerText, { color: colors.success }]}>
+              {correctAnswer}
+            </ThemedText>
+          </ThemedText>
+        </>
+      )}
+
+      {/* Full reference link */}
+      <TouchableOpacity
+        style={styles.fullReferenceLink}
+        onPress={() =>
+          Linking.openURL(
+            "https://www.churchofjesuschrist.org/study/scriptures?lang=eng"
+          )
+        }
+        accessibilityLabel={`Open ${fullReference} in scriptures`}
+        accessibilityRole="link"
+        accessibilityHint="Opens the scripture reference in a web browser"
+      >
+        <View style={styles.fullReferenceContainer}>
+          <ThemedText style={styles.fullReferenceText}>
+            {fullReference}
+          </ThemedText>
+          <Ionicons
+            name="open-outline"
+            size={12}
+            color="#888888"
+            style={styles.fullReferenceIcon}
+          />
+        </View>
+      </TouchableOpacity>
+    </Animated.View>
+  );
+}
+
+// Animated Input Field with focus glow and shake
+interface AnimatedInputProps {
+  value: string;
+  onChangeText: (text: string) => void;
+  placeholder: string;
+  colors: typeof Colors.light;
+  colorScheme: 'light' | 'dark';
+  onSubmitEditing: () => void;
+  inputRef: React.RefObject<TextInput>;
+  shouldShake: boolean;
+  onShakeComplete: () => void;
+}
+
+function AnimatedInput({
+  value,
+  onChangeText,
+  placeholder,
+  colors,
+  colorScheme,
+  onSubmitEditing,
+  inputRef,
+  shouldShake,
+  onShakeComplete,
+}: AnimatedInputProps) {
+  const [isFocused, setIsFocused] = useState(false);
+  const borderWidth = useSharedValue(1);
+  const glowOpacity = useSharedValue(0);
+  const translateX = useSharedValue(0);
+
+  useEffect(() => {
+    if (isFocused) {
+      borderWidth.value = withTiming(2, { duration: 150 });
+      glowOpacity.value = withTiming(1, { duration: 150 });
+    } else {
+      borderWidth.value = withTiming(1, { duration: 150 });
+      glowOpacity.value = withTiming(0, { duration: 150 });
+    }
+  }, [isFocused]);
+
+  useEffect(() => {
+    if (shouldShake) {
+      translateX.value = withSequence(
+        withTiming(-8, { duration: 50 }),
+        withTiming(8, { duration: 50 }),
+        withTiming(-6, { duration: 50 }),
+        withTiming(6, { duration: 50 }),
+        withTiming(-3, { duration: 50 }),
+        withTiming(0, { duration: 50 })
+      );
+      // Notify parent that shake is complete
+      setTimeout(onShakeComplete, 300);
+    }
+  }, [shouldShake]);
+
+  const inputContainerStyle = useAnimatedStyle(() => ({
+    transform: [{ translateX: translateX.value }],
+    borderWidth: borderWidth.value,
+    borderColor: isFocused ? colors.tint : colors.border,
+  }));
+
+  const glowStyle = useAnimatedStyle(() => ({
+    opacity: glowOpacity.value,
+  }));
+
+  return (
+    <View style={styles.inputWrapper}>
+      {/* Glow effect */}
+      <Animated.View
+        style={[
+          styles.inputGlow,
+          {
+            backgroundColor: colors.tint,
+            shadowColor: colors.tint,
+          },
+          glowStyle,
+        ]}
+      />
+      <Animated.View style={[styles.animatedInputContainer, inputContainerStyle, { backgroundColor: colors.background }]}>
+        <TextInput
+          ref={inputRef}
+          style={[
+            styles.guessInputInner,
+            { color: colors.text },
+          ]}
+          placeholder={placeholder}
+          placeholderTextColor={colorScheme === 'dark' ? '#666' : '#888'}
+          value={value}
+          onChangeText={onChangeText}
+          autoCapitalize="words"
+          returnKeyType="go"
+          onSubmitEditing={onSubmitEditing}
+          onFocus={() => setIsFocused(true)}
+          onBlur={() => setIsFocused(false)}
+          accessibilityLabel="Enter your scripture reference guess"
+          accessibilityHint={placeholder}
+        />
+      </Animated.View>
+    </View>
+  );
+}
+
+// Animated Submit Button with scale effect
+interface AnimatedSubmitButtonProps {
+  onPress: () => void;
+  loading: boolean;
+  disabled: boolean;
+  label: string;
+}
+
+function AnimatedSubmitButton({ onPress, loading, disabled, label }: AnimatedSubmitButtonProps) {
+  const scale = useSharedValue(1);
+
+  const handlePressIn = () => {
+    scale.value = withSpring(0.98, { damping: 20, stiffness: 300 });
+  };
+
+  const handlePressOut = () => {
+    scale.value = withSpring(1, { damping: 20, stiffness: 300 });
+  };
+
+  const animatedStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: scale.value }],
+  }));
+
+  return (
+    <Animated.View style={animatedStyle}>
+      <GradientButton
+        onPress={onPress}
+        label={label}
+        variant="primary"
+        loading={loading}
+        disabled={disabled}
+      />
+    </Animated.View>
+  );
+}
+
+// Score Ring Progress Component
+interface ScoreRingProps {
+  progress: number; // 0-1
+  score: number;
+  total: number;
+  size: number;
+  strokeWidth: number;
+}
+
+function ScoreRing({ progress, score, total, size }: ScoreRingProps) {
+  const animatedProgress = useSharedValue(0);
+  const colorProgress = useSharedValue(0);
+
+  useEffect(() => {
+    animatedProgress.value = withTiming(progress, {
+      duration: 1500,
+      easing: Easing.out(Easing.cubic),
+    });
+    colorProgress.value = withTiming(score / total, {
+      duration: 1500,
+      easing: Easing.out(Easing.cubic),
+    });
+  }, [progress, score, total]);
+
+  // Calculate colors based on score
+  const getScoreColor = () => {
+    const ratio = score / total;
+    if (ratio >= 0.8) return '#4CAF50'; // Green
+    if (ratio >= 0.5) return '#FF9800'; // Orange
+    return '#F44336'; // Red
+  };
+
+  const ringStyle = useAnimatedStyle(() => {
+    const rotation = interpolate(animatedProgress.value, [0, 1], [0, 360]);
+    return {
+      transform: [{ rotate: `${rotation}deg` }],
+    };
+  });
+
+  const radius = (size - 16) / 2;
+  const circumference = 2 * Math.PI * radius;
+
+  return (
+    <View style={[styles.scoreRingContainer, { width: size, height: size }]}>
+      {/* Background ring */}
+      <View style={[styles.scoreRingBg, {
+        width: size - 8,
+        height: size - 8,
+        borderRadius: (size - 8) / 2,
+        borderWidth: 4,
+        borderColor: 'rgba(0,0,0,0.1)',
+      }]} />
+      {/* Progress ring using View rotation trick */}
+      <Animated.View
+        style={[
+          styles.scoreRingProgress,
+          {
+            width: size,
+            height: size,
+            borderRadius: size / 2,
+            borderWidth: 4,
+            borderColor: getScoreColor(),
+            borderTopColor: 'transparent',
+            borderRightColor: 'transparent',
+          },
+          ringStyle,
+        ]}
+      />
+    </View>
+  );
+}
+
+// Animated Summary Card with staggered children
+interface AnimatedSummaryCardProps {
+  children: React.ReactNode;
+  colors: typeof Colors.light;
+  visible: boolean;
+}
+
+function AnimatedSummaryCard({ children, colors, visible }: AnimatedSummaryCardProps) {
+  const translateY = useSharedValue(100);
+  const opacity = useSharedValue(0);
+
+  useEffect(() => {
+    if (visible) {
+      translateY.value = withSpring(0, SPRING_CONFIG);
+      opacity.value = withTiming(1, { duration: 300 });
+    }
+  }, [visible]);
+
+  const cardStyle = useAnimatedStyle(() => ({
+    transform: [{ translateY: translateY.value }],
+    opacity: opacity.value,
+  }));
+
+  return (
+    <Animated.View style={[styles.summaryCard, { backgroundColor: colors.card }, cardStyle]}>
+      {children}
+    </Animated.View>
+  );
+}
+
 export default function GameScreen() {
-  const { mode } = useLocalSearchParams<{ mode: GameMode }>();
+  const { mode, challengeId, isCreator } = useLocalSearchParams<{
+    mode: GameMode | 'daily';
+    challengeId?: string;
+    isCreator?: string;
+  }>();
   const colorScheme = useColorScheme();
+  const colors = Colors[colorScheme ?? 'light'];
+  const { playCorrect, playWrong } = useSound();
+
+  // Check if this is daily challenge mode
+  const isDailyChallenge = mode === 'daily';
+  const effectiveMode: GameMode = isDailyChallenge ? 'easy' : (mode as GameMode);
+
+  // Challenge mode
+  const isChallengeMode = !!challengeId;
+  const isChallenger = isCreator === 'false';
+
+  // Daily challenge hook
+  const {
+    dailyScripture,
+    stats: dailyStats,
+    todayCompleted,
+    completeDailyChallenge,
+  } = useDailyChallenge();
 
   // Auth and leaderboard hooks
   const {
@@ -53,7 +624,20 @@ export default function GameScreen() {
     updateHighScore,
     joinLeaderboard
   } = useAuth();
-  const { submitScore } = useLeaderboard(mode as GameMode);
+  const { submitScore } = useLeaderboard(effectiveMode);
+
+  // Challenge hook
+  const {
+    challenge,
+    submitCreatorScore,
+    submitChallengerScore,
+  } = useChallenge(challengeId);
+
+  // Challenge scriptures and question tracking
+  const [challengeScriptureIndex, setChallengeScriptureIndex] = useState(0);
+  const totalQuestions = isChallengeMode && challenge
+    ? challenge.questionCount
+    : TOTAL_QUESTIONS;
 
   const [currentScripture, setCurrentScripture] = useState<Scripture | null>(
     null
@@ -68,23 +652,103 @@ export default function GameScreen() {
   const [showSummaryCard, setShowSummaryCard] = useState(false);
   const [showLeaderboardPrompt, setShowLeaderboardPrompt] = useState(false);
   const [isHighScore, setIsHighScore] = useState(false);
+  const [earnedBadges, setEarnedBadges] = useState<DailyChallengeBadge[]>([]);
+  const [showBadgeModal, setShowBadgeModal] = useState(false);
+  const [currentBadgeIndex, setCurrentBadgeIndex] = useState(0);
+  const [inputShouldShake, setInputShouldShake] = useState(false);
+
+  // Track answers for progress indicator
+  const [answerHistory, setAnswerHistory] = useState<('correct' | 'incorrect' | 'pending')[]>(
+    Array(totalQuestions).fill('pending')
+  );
+
   const shareCardRef = useRef<View>(null);
+  const isMountedRef = useRef(true);
+  const submitTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const inputRef = useRef<TextInput>(null);
+
+  // Animation shared values
+  const scoreAnimation = useSharedValue(0);
+  const circleScale = useSharedValue(0.8);
+
+  // Animated style for the score circle
+  const animatedCircleStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: circleScale.value }],
+  }));
 
   useEffect(() => {
-    // Select a random scripture when the component mounts
-    setCurrentScripture(getRandomScripture());
-  }, []);
+    // Select scripture when the component mounts
+    if (isDailyChallenge) {
+      setCurrentScripture(dailyScripture);
+    } else if (isChallengeMode && challenge) {
+      // Use pre-defined challenge scriptures
+      setCurrentScripture(challenge.scriptures[0]);
+      setChallengeScriptureIndex(0);
+    } else if (!isChallengeMode) {
+      setCurrentScripture(getRandomScripture());
+    }
+  }, [isDailyChallenge, dailyScripture, isChallengeMode, challenge]);
 
   // Handle session completion - check for high score and show leaderboard prompt
   useEffect(() => {
-    if (sessionComplete) {
-      const checkHighScore = async () => {
-        const newHighScore = isNewHighScore(mode as GameMode, correctCount);
+    if (!sessionComplete) return;
+
+    let isMounted = true;
+    const timeoutIds: NodeJS.Timeout[] = [];
+
+    const handleCompletion = async () => {
+      try {
+        // Handle challenge mode completion
+        if (isChallengeMode && challengeId) {
+          // Submit score to challenge
+          if (isChallenger) {
+            await submitChallengerScore(challengeId, correctCount);
+            if (!isMounted) return;
+            // Challenger goes to result screen to see comparison
+            router.replace({
+              pathname: '/challenge/result',
+              params: { challengeId },
+            });
+          } else {
+            await submitCreatorScore(challengeId, correctCount);
+            if (!isMounted) return;
+            // Creator goes to created-result screen with score to share
+            router.replace({
+              pathname: '/challenge/created-result',
+              params: {
+                challengeId,
+                score: correctCount.toString(),
+                questionCount: totalQuestions.toString(),
+              },
+            });
+          }
+          return;
+        }
+
+        // Handle daily challenge completion
+        if (isDailyChallenge) {
+          const newBadges = await completeDailyChallenge(correctCount > 0);
+          if (!isMounted) return;
+
+          if (newBadges.length > 0) {
+            setEarnedBadges(newBadges);
+            setCurrentBadgeIndex(0);
+            setShowBadgeModal(true);
+          }
+          setShowSummaryCard(true);
+          return;
+        }
+
+        // Regular game mode - check for high score
+        const newHighScore = isNewHighScore(effectiveMode, correctCount);
+        if (!isMounted) return;
+
         setIsHighScore(newHighScore);
 
         // Update local high score
         if (newHighScore) {
-          await updateHighScore(mode as GameMode, correctCount);
+          await updateHighScore(effectiveMode, correctCount);
+          if (!isMounted) return;
         }
 
         // Determine if we should show leaderboard prompt
@@ -94,51 +758,108 @@ export default function GameScreen() {
         if (shouldPrompt) {
           // Show prompt after a short delay (or after confetti for high scores)
           const delay = correctCount >= 8 ? 1500 : 500;
-          setTimeout(() => {
-            setShowLeaderboardPrompt(true);
+          const promptTimeout = setTimeout(() => {
+            if (isMounted) setShowLeaderboardPrompt(true);
           }, delay);
+          timeoutIds.push(promptTimeout);
         }
-      };
 
-      checkHighScore();
-
-      // Delay showing the summary card to let confetti play first
-      if (correctCount >= 8) {
-        const timer = setTimeout(() => {
+        // Delay showing the summary card to let confetti play first
+        if (correctCount >= 8) {
+          const summaryTimeout = setTimeout(() => {
+            if (isMounted) setShowSummaryCard(true);
+          }, 1500);
+          timeoutIds.push(summaryTimeout);
+        } else {
           setShowSummaryCard(true);
-        }, 1500);
-        return () => clearTimeout(timer);
-      } else {
-        setShowSummaryCard(true);
+        }
+      } catch (error) {
+        console.error('Error completing session:', error);
       }
+    };
+
+    handleCompletion();
+
+    return () => {
+      isMounted = false;
+      timeoutIds.forEach(clearTimeout);
+    };
+  }, [sessionComplete, correctCount, effectiveMode, isNewHighScore, updateHighScore, hasJoinedLeaderboard, isDailyChallenge, completeDailyChallenge, isChallengeMode, challengeId, isChallenger, submitCreatorScore, submitChallengerScore]);
+
+  // Trigger score animation when summary card appears
+  useEffect(() => {
+    if (showSummaryCard) {
+      // Count up animation
+      scoreAnimation.value = withTiming(correctCount, {
+        duration: 1500,
+        easing: Easing.out(Easing.cubic),
+      });
+      // Pop/bounce effect
+      circleScale.value = withSpring(1, {
+        damping: 12,
+        stiffness: 150,
+      });
     }
-  }, [sessionComplete, correctCount, mode, isNewHighScore, updateHighScore, hasJoinedLeaderboard]);
+  }, [showSummaryCard, correctCount]);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+      if (submitTimeoutRef.current) {
+        clearTimeout(submitTimeoutRef.current);
+      }
+    };
+  }, []);
 
   const handleSubmitGuess = async () => {
     if (!currentScripture) return;
 
     if (!userGuess.trim()) {
-      Alert.alert("Please enter a guess");
+      // Trigger shake animation on input
+      setInputShouldShake(true);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
       return;
     }
 
     setLoading(true);
+    Keyboard.dismiss();
+
+    // Capture current values to avoid stale closure
+    const capturedScripture = currentScripture;
+    const capturedGuess = userGuess;
+
+    // Clear any existing timeout
+    if (submitTimeoutRef.current) {
+      clearTimeout(submitTimeoutRef.current);
+    }
 
     // Simulate a brief loading state
-    setTimeout(async () => {
-      const correct = checkGuess(currentScripture, userGuess, mode as GameMode);
+    submitTimeoutRef.current = setTimeout(() => {
+      if (!isMountedRef.current) return;
+
+      const correct = checkGuess(capturedScripture, capturedGuess, effectiveMode);
 
       setIsCorrect(correct);
       setHasGuessed(true);
-
       setLoading(false);
+
+      // Update answer history for progress indicator
+      setAnswerHistory(prev => {
+        const newHistory = [...prev];
+        newHistory[questionCount - 1] = correct ? 'correct' : 'incorrect';
+        return newHistory;
+      });
 
       // Track correct answers
       if (correct) {
         setCorrectCount(prev => prev + 1);
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        playCorrect();
       } else {
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+        playWrong();
       }
     }, 500);
   };
@@ -146,14 +867,28 @@ export default function GameScreen() {
   const handleNextScripture = () => {
     if (!currentScripture) return;
 
-    // Check if session is complete
-    if (questionCount >= TOTAL_QUESTIONS) {
+    // Daily challenge is single question - always complete after first question
+    if (isDailyChallenge) {
       setSessionComplete(true);
       return;
     }
 
-    // Select a new random scripture
-    setCurrentScripture(getNextRandomScripture(currentScripture));
+    // Check if session is complete
+    if (questionCount >= totalQuestions) {
+      setSessionComplete(true);
+      return;
+    }
+
+    // Challenge mode - use pre-defined scriptures
+    if (isChallengeMode && challenge) {
+      const nextIndex = challengeScriptureIndex + 1;
+      setCurrentScripture(challenge.scriptures[nextIndex]);
+      setChallengeScriptureIndex(nextIndex);
+    } else {
+      // Select a new random scripture
+      setCurrentScripture(getNextRandomScripture(currentScripture));
+    }
+
     setUserGuess("");
     setHasGuessed(false);
     setIsCorrect(false);
@@ -171,16 +906,20 @@ export default function GameScreen() {
     setUserGuess("");
     setHasGuessed(false);
     setIsCorrect(false);
+    setAnswerHistory(Array(totalQuestions).fill('pending'));
+    // Reset animations for next game
+    scoreAnimation.value = 0;
+    circleScale.value = 0.8;
   };
 
-  const handleLeaderboardSubmit = async (submittedNickname: string) => {
+  const handleLeaderboardSubmit = async (submittedNickname: string, photoURL?: string | null) => {
     try {
       if (!hasJoinedLeaderboard) {
         // First time joining - create profile and submit
-        await joinLeaderboard(submittedNickname, mode as GameMode, correctCount);
+        await joinLeaderboard(submittedNickname, effectiveMode, correctCount);
       }
-      // Submit score to leaderboard
-      await submitScore(correctCount, submittedNickname);
+      // Submit score to leaderboard - pass photoURL directly to avoid React state timing issues
+      await submitScore(correctCount, submittedNickname, photoURL);
       setShowLeaderboardPrompt(false);
     } catch (error) {
       console.error('Failed to submit to leaderboard:', error);
@@ -188,11 +927,35 @@ export default function GameScreen() {
     }
   };
 
+  const handlePlayRegularGame = () => {
+    router.replace({
+      pathname: '/game',
+      params: { mode: 'easy' }
+    });
+  };
+
+  const handleDismissBadge = () => {
+    if (currentBadgeIndex < earnedBadges.length - 1) {
+      setCurrentBadgeIndex(prev => prev + 1);
+    } else {
+      setShowBadgeModal(false);
+    }
+  };
+
   const handleLeaderboardSkip = () => {
     setShowLeaderboardPrompt(false);
   };
 
+  const handleNavigateToLeaderboard = () => {
+    setShowLeaderboardPrompt(false);
+    router.push({
+      pathname: '/(tabs)/leaderboard',
+      params: { difficulty: mode }
+    });
+  };
+
   const handleShare = async () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     const APP_STORE_LINK = 'https://apps.apple.com/us/app/scripture-mastery-pro/id6742937573';
     const message = `I got ${correctCount}/${TOTAL_QUESTIONS} on Scripture Mastery! Can you beat my score?\n${APP_STORE_LINK}`;
 
@@ -210,8 +973,13 @@ export default function GameScreen() {
     }
   };
 
+  const handleViewLeaderboard = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    router.push('/(tabs)/leaderboard');
+  };
+
   const getPlaceholderText = () => {
-    switch (mode) {
+    switch (effectiveMode) {
       case "easy":
         return 'Enter book name (e.g., "John")';
       case "medium":
@@ -228,7 +996,7 @@ export default function GameScreen() {
 
     const { book, chapter, verse } = currentScripture.reference;
 
-    switch (mode) {
+    switch (effectiveMode) {
       case "easy":
         return book;
       case "medium":
@@ -248,6 +1016,15 @@ export default function GameScreen() {
   };
 
   const getDifficultyTitle = () => {
+    if (isDailyChallenge) {
+      return "Daily Challenge";
+    }
+    if (isChallengeMode && challenge) {
+      const opponentName = isChallenger
+        ? challenge.creatorNickname
+        : 'Friend';
+      return `Challenge vs ${opponentName}`;
+    }
     switch (mode) {
       case "easy":
         return "Easy Mode";
@@ -271,7 +1048,7 @@ export default function GameScreen() {
       <SafeAreaView style={[styles.container, styles.loadingContainer]}>
         <ActivityIndicator
           size="large"
-          color={Colors[colorScheme ?? "light"].tint}
+          color={colors.tint}
         />
       </SafeAreaView>
     );
@@ -284,26 +1061,36 @@ export default function GameScreen() {
           headerTitle: () => (
             <View style={{ alignItems: 'center' }}>
               <Text style={{
-                color: Colors[colorScheme ?? "light"].text,
+                color: colors.text,
                 fontSize: 17,
                 fontWeight: '600'
               }}>
                 {getDifficultyTitle()}
               </Text>
-              <Text style={{
-                color: Colors[colorScheme ?? "light"].text,
-                fontSize: 12,
-                opacity: 0.6
-              }}>
-                {sessionComplete ? "Complete!" : `Question ${questionCount} of ${TOTAL_QUESTIONS}`}
-              </Text>
+              {!sessionComplete && !isDailyChallenge && (
+                <ProgressIndicator
+                  currentQuestion={questionCount}
+                  totalQuestions={totalQuestions}
+                  answers={answerHistory}
+                  colorScheme={colorScheme ?? 'light'}
+                />
+              )}
+              {!sessionComplete && isDailyChallenge && (
+                <Text style={{
+                  color: colors.text,
+                  fontSize: 12,
+                  opacity: 0.6
+                }}>
+                  Guess the book
+                </Text>
+              )}
             </View>
           ),
           headerBackTitle: "Home",
           headerStyle: {
-            backgroundColor: Colors[colorScheme ?? "light"].background,
+            backgroundColor: colors.background,
           },
-          headerTintColor: Colors[colorScheme ?? "light"].tint,
+          headerTintColor: colors.tint,
           headerShadowVisible: false,
         }}
       />
@@ -364,45 +1151,83 @@ export default function GameScreen() {
                 </View>
               </View>
 
-          <View style={[styles.summaryCard, { backgroundColor: Colors[colorScheme ?? "light"].card }]}>
-            <ThemedText style={styles.summaryTitle}>Session Complete!</ThemedText>
-            <View style={[styles.scoreCircle, { backgroundColor: getScoreColor().bg }]}>
-              <ThemedText style={[styles.scoreText, { color: getScoreColor().text }]}>
-                {correctCount}/{TOTAL_QUESTIONS}
-              </ThemedText>
-            </View>
-            <ThemedText style={styles.summaryMessage}>
-              {correctCount === TOTAL_QUESTIONS ? "Perfect score!" :
-               correctCount >= 8 ? "Great job!" :
-               correctCount >= 5 ? "Good effort!" :
-               "Keep practicing!"}
+          <AnimatedSummaryCard colors={colors} visible={showSummaryCard}>
+            <ThemedText style={styles.summaryTitle}>
+              {isDailyChallenge ? "Daily Challenge Complete!" : "Session Complete!"}
             </ThemedText>
 
+            {isDailyChallenge ? (
+              <>
+                <View style={[
+                  styles.scoreCircle,
+                  { backgroundColor: correctCount > 0 ? "#e6f7e6" : "#ffebee" }
+                ]}>
+                  <Ionicons
+                    name={correctCount > 0 ? "checkmark-circle" : "close-circle"}
+                    size={60}
+                    color={correctCount > 0 ? "#4CAF50" : "#F44336"}
+                  />
+                </View>
+                <ThemedText style={styles.summaryMessage}>
+                  {correctCount > 0 ? "Correct!" : "Better luck tomorrow!"}
+                </ThemedText>
+                <View style={styles.streakDisplay}>
+                  <Ionicons name="flame" size={24} color="#ff6b35" />
+                  <ThemedText style={styles.streakDisplayText}>
+                    {dailyStats.currentStreak} day streak
+                  </ThemedText>
+                </View>
+              </>
+            ) : (
+              <>
+                <View style={styles.scoreCircleWrapper}>
+                  <ScoreRing
+                    progress={correctCount / TOTAL_QUESTIONS}
+                    score={correctCount}
+                    total={TOTAL_QUESTIONS}
+                    size={160}
+                    strokeWidth={4}
+                  />
+                  <Animated.View style={[styles.scoreCircle, { backgroundColor: getScoreColor().bg }, animatedCircleStyle]}>
+                    <AnimatedScore
+                      animatedValue={scoreAnimation}
+                      total={TOTAL_QUESTIONS}
+                      style={[styles.scoreText, { color: getScoreColor().text }]}
+                    />
+                  </Animated.View>
+                </View>
+                <ThemedText style={styles.summaryMessage}>
+                  {correctCount === TOTAL_QUESTIONS ? "Perfect score!" :
+                   correctCount >= 8 ? "Great job!" :
+                   correctCount >= 5 ? "Good effort!" :
+                   "Keep practicing!"}
+                </ThemedText>
+              </>
+            )}
+
             <View style={styles.summaryButtons}>
-              <TouchableOpacity
-                style={styles.playAgainButtonContainer}
-                onPress={handlePlayAgain}
-              >
-                <LinearGradient
-                  colors={
-                    colorScheme === 'dark'
-                      ? ['#1a7e7e', '#0a5e5e']
-                      : ['#0a9ea4', '#087d7a']
-                  }
-                  style={styles.playAgainButton}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 0 }}
-                >
-                  <ThemedText style={styles.playAgainButtonText}>Play Again</ThemedText>
-                </LinearGradient>
-              </TouchableOpacity>
+              {isDailyChallenge ? (
+                <GradientButton
+                  onPress={handlePlayRegularGame}
+                  label="Play Regular Game"
+                  variant="teal"
+                />
+              ) : (
+                <GradientButton
+                  onPress={handlePlayAgain}
+                  label="Play Again"
+                  variant="teal"
+                />
+              )}
 
               <TouchableOpacity
                 style={styles.shareButtonContainer}
                 onPress={handleShare}
+                accessibilityLabel="Share your score"
+                accessibilityRole="button"
               >
-                <View style={[styles.shareButton, { borderColor: Colors[colorScheme ?? "light"].tint }]}>
-                  <ThemedText style={[styles.shareButtonText, { color: Colors[colorScheme ?? "light"].tint }]}>
+                <View style={[styles.shareButton, { borderColor: colors.tint }]}>
+                  <ThemedText style={[styles.shareButtonText, { color: colors.tint }]}>
                     Share Score
                   </ThemedText>
                 </View>
@@ -410,11 +1235,13 @@ export default function GameScreen() {
 
               <TouchableOpacity
                 style={styles.leaderboardButtonContainer}
-                onPress={() => router.push('/(tabs)/leaderboard')}
+                onPress={handleViewLeaderboard}
+                accessibilityLabel="View leaderboard"
+                accessibilityRole="button"
               >
-                <View style={[styles.leaderboardButton, { borderColor: Colors[colorScheme ?? "light"].tint }]}>
-                  <Ionicons name="trophy-outline" size={18} color={Colors[colorScheme ?? "light"].tint} style={{ marginRight: 6 }} />
-                  <ThemedText style={[styles.leaderboardButtonText, { color: Colors[colorScheme ?? "light"].tint }]}>
+                <View style={[styles.leaderboardButton, { borderColor: colors.tint }]}>
+                  <Ionicons name="trophy-outline" size={18} color={colors.tint} style={{ marginRight: 6 }} />
+                  <ThemedText style={[styles.leaderboardButtonText, { color: colors.tint }]}>
                     View Leaderboard
                   </ThemedText>
                 </View>
@@ -422,14 +1249,19 @@ export default function GameScreen() {
 
               <TouchableOpacity
                 style={styles.homeButtonContainer}
-                onPress={() => router.back()}
+                onPress={() => {
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                  router.back();
+                }}
+                accessibilityLabel="Return home"
+                accessibilityRole="button"
               >
-                <View style={[styles.homeButton, { borderColor: Colors[colorScheme ?? "light"].border }]}>
+                <View style={[styles.homeButton, { borderColor: colors.border }]}>
                   <ThemedText style={styles.homeButtonText}>Home</ThemedText>
                 </View>
               </TouchableOpacity>
             </View>
-          </View>
+          </AnimatedSummaryCard>
             </>
           )}
 
@@ -437,13 +1269,20 @@ export default function GameScreen() {
             visible={showLeaderboardPrompt}
             score={correctCount}
             totalQuestions={TOTAL_QUESTIONS}
-            difficulty={mode as GameMode}
+            difficulty={effectiveMode}
             isNewHighScore={isHighScore}
             hasNickname={!!nickname}
             nickname={nickname}
             onClose={() => setShowLeaderboardPrompt(false)}
             onSubmit={handleLeaderboardSubmit}
             onSkip={handleLeaderboardSkip}
+            onNavigateToLeaderboard={handleNavigateToLeaderboard}
+          />
+
+          <BadgeEarnedModal
+            badge={earnedBadges[currentBadgeIndex] || null}
+            visible={showBadgeModal}
+            onDismiss={handleDismissBadge}
           />
         </ThemedView>
       ) : (
@@ -456,96 +1295,22 @@ export default function GameScreen() {
           <ScrollView style={styles.scrollContainer} showsVerticalScrollIndicator={false}>
             {hasGuessed && (
               <ThemedView style={styles.resultContainer}>
-                {isCorrect ? (
-                  // Correct answer UI
-                  <View style={[styles.resultCard, { backgroundColor: Colors[colorScheme ?? "light"].card }]}>
-                    <View style={styles.iconContainer}>
-                      <View style={styles.checkCircle}>
-                        <ThemedText style={styles.checkmark}>✓</ThemedText>
-                      </View>
-                    </View>
-                    <ThemedText style={[styles.correctText, { color: Colors[colorScheme ?? "light"].success }]}>
-                      Correct!
-                    </ThemedText>
-                    <ThemedText style={styles.correctReference}>
-                      {getFullReference()}
-                    </ThemedText>
-
-                    {/* Add this full reference link */}
-                    <TouchableOpacity
-                      style={styles.fullReferenceLink}
-                      onPress={() =>
-                        Linking.openURL(
-                          "https://www.churchofjesuschrist.org/study/scriptures?lang=eng"
-                        )
-                      }
-                    >
-                      <View style={styles.fullReferenceContainer}>
-                        <ThemedText style={styles.fullReferenceText}>
-                          {getFullReference()}
-                        </ThemedText>
-                        <Ionicons
-                          name="open-outline"
-                          size={12}
-                          color="#888888"
-                          style={styles.fullReferenceIcon}
-                        />
-                      </View>
-                    </TouchableOpacity>
-                  </View>
-                ) : (
-                  // Incorrect answer UI
-                  <View style={[styles.resultCard, { backgroundColor: Colors[colorScheme ?? "light"].card }]}>
-                    <View style={styles.iconContainer}>
-                      <View style={styles.xCircle}>
-                        <ThemedText style={styles.xMark}>✗</ThemedText>
-                      </View>
-                    </View>
-                    <ThemedText style={styles.incorrectGuess}>
-                      You guessed{" "}
-                      <ThemedText style={[styles.userGuessText, { color: Colors[colorScheme ?? "light"].error }]}>
-                        {userGuess}
-                      </ThemedText>
-                    </ThemedText>
-                    <ThemedText style={styles.correctReference}>
-                      It was{" "}
-                      <ThemedText style={[styles.correctAnswerText, { color: Colors[colorScheme ?? "light"].success }]}>
-                        {getCorrectAnswer()}
-                      </ThemedText>
-                    </ThemedText>
-
-                    {/* Full reference in gray text with icon */}
-                    <TouchableOpacity
-                      style={styles.fullReferenceLink}
-                      onPress={() =>
-                        Linking.openURL(
-                          "https://www.churchofjesuschrist.org/study/scriptures?lang=eng"
-                        )
-                      }
-                    >
-                      <View style={styles.fullReferenceContainer}>
-                        <ThemedText style={styles.fullReferenceText}>
-                          {getFullReference()}
-                        </ThemedText>
-                        <Ionicons
-                          name="open-outline"
-                          size={12}
-                          color="#888888"
-                          style={styles.fullReferenceIcon}
-                        />
-                      </View>
-                    </TouchableOpacity>
-                  </View>
-                )}
+                <AnimatedResultCard
+                  isCorrect={isCorrect}
+                  userGuess={userGuess}
+                  correctAnswer={getCorrectAnswer()}
+                  fullReference={getFullReference()}
+                  colors={colors}
+                />
               </ThemedView>
             )}
 
-            <ThemedView 
+            <ThemedView
               style={[
-                styles.scriptureContainer, 
-                { 
-                  borderColor: Colors[colorScheme ?? "light"].border,
-                  backgroundColor: Colors[colorScheme ?? "light"].card 
+                styles.scriptureContainer,
+                {
+                  borderColor: colors.border,
+                  backgroundColor: colors.card
                 }
               ]}
             >
@@ -560,87 +1325,51 @@ export default function GameScreen() {
         </ThemedView>
 
         {!hasGuessed ? (
-          <ThemedView 
+          <ThemedView
             style={[
-              styles.inputContainer, 
-              { 
-                borderTopColor: Colors[colorScheme ?? "light"].border,
-                backgroundColor: Colors[colorScheme ?? "light"].card 
+              styles.inputContainer,
+              {
+                borderTopColor: colors.border,
+                backgroundColor: colors.card
               }
             ]}
           >
             <ThemedText style={styles.guessLabel}>
               What's the reference?
             </ThemedText>
-            <TextInput
-              style={[
-                styles.guessInput,
-                {
-                  borderColor: Colors[colorScheme ?? "light"].border,
-                  color: Colors[colorScheme ?? "light"].text,
-                  backgroundColor: Colors[colorScheme ?? "light"].background,
-                },
-              ]}
-              placeholder={getPlaceholderText()}
-              placeholderTextColor={colorScheme === 'dark' ? '#666' : '#888'}
+            <AnimatedInput
               value={userGuess}
               onChangeText={setUserGuess}
-              autoCapitalize="words"
-              returnKeyType="go"
+              placeholder={getPlaceholderText()}
+              colors={colors}
+              colorScheme={colorScheme ?? 'light'}
               onSubmitEditing={handleSubmitGuess}
+              inputRef={inputRef as React.RefObject<TextInput>}
+              shouldShake={inputShouldShake}
+              onShakeComplete={() => setInputShouldShake(false)}
             />
-            <TouchableOpacity
-              style={styles.submitButtonContainer}
+            <AnimatedSubmitButton
               onPress={handleSubmitGuess}
+              loading={loading}
               disabled={loading}
-            >
-              <LinearGradient
-                colors={
-                  colorScheme === 'dark' 
-                    ? ['#1a5d7e', '#0a3d5e'] 
-                    : [Colors.light.tint, '#085d7a']
-                }
-                style={styles.submitButton}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 0 }}
-              >
-                {loading ? (
-                  <ActivityIndicator color="white" />
-                ) : (
-                  <ThemedText style={styles.submitButtonText}>Submit</ThemedText>
-                )}
-              </LinearGradient>
-            </TouchableOpacity>
+              label="Submit"
+            />
           </ThemedView>
         ) : (
-          <ThemedView 
+          <ThemedView
             style={[
-              styles.bottomButtonContainer, 
-              { 
-                borderTopColor: Colors[colorScheme ?? "light"].border,
-                backgroundColor: Colors[colorScheme ?? "light"].card 
+              styles.bottomButtonContainer,
+              {
+                borderTopColor: colors.border,
+                backgroundColor: colors.card
               }
             ]}
           >
-            <TouchableOpacity
-              style={styles.nextButtonContainer}
+            <GradientButton
               onPress={handleNextScripture}
-            >
-              <LinearGradient
-                colors={
-                  colorScheme === 'dark' 
-                    ? ['#1a7e7e', '#0a5e5e'] 
-                    : ['#0a9ea4', '#087d7a']
-                }
-                style={styles.nextButton}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 0 }}
-              >
-                <ThemedText style={styles.nextButtonText}>
-                  {questionCount >= TOTAL_QUESTIONS ? "See Results" : "Next Scripture"}
-                </ThemedText>
-              </LinearGradient>
-            </TouchableOpacity>
+              label={questionCount >= totalQuestions ? "See Results" : "Next Scripture"}
+              variant="teal"
+            />
           </ThemedView>
         )}
       </KeyboardAvoidingView>
@@ -681,9 +1410,6 @@ const styles = StyleSheet.create({
     fontFamily: "Times New Roman",
     textAlign: "left",
   },
-  spacer: {
-    flex: 1,
-  },
   inputContainer: {
     padding: 20,
     borderTopWidth: 1,
@@ -698,6 +1424,32 @@ const styles = StyleSheet.create({
     textAlign: "center",
     fontWeight: "500",
   },
+  // New animated input styles
+  inputWrapper: {
+    position: 'relative',
+    marginBottom: 20,
+  },
+  inputGlow: {
+    position: 'absolute',
+    top: -2,
+    left: -2,
+    right: -2,
+    bottom: -2,
+    borderRadius: 10,
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+    elevation: 0,
+  },
+  animatedInputContainer: {
+    borderRadius: 8,
+    overflow: 'hidden',
+  },
+  guessInputInner: {
+    width: "100%",
+    padding: 15,
+    fontSize: 16,
+  },
   guessInput: {
     width: "100%",
     padding: 15,
@@ -705,26 +1457,6 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     fontSize: 16,
     marginBottom: 20,
-  },
-  submitButtonContainer: {
-    width: "100%",
-    borderRadius: 8,
-    overflow: "hidden",
-    elevation: 3,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-  },
-  submitButton: {
-    width: "100%",
-    padding: 15,
-    alignItems: "center",
-  },
-  submitButtonText: {
-    color: "white",
-    fontSize: 16,
-    fontWeight: "bold",
   },
   resultContainer: {
     marginBottom: 20,
@@ -739,12 +1471,28 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.1,
     shadowRadius: 4,
     elevation: 3,
+    overflow: 'hidden',
+  },
+  flashOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    zIndex: 0,
   },
   iconContainer: {
     width: "100%",
     alignItems: "center",
     justifyContent: "center",
     marginBottom: 15,
+  },
+  feedbackPulse: {
+    position: 'absolute',
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    opacity: 0.3,
   },
   checkCircle: {
     width: 80,
@@ -801,26 +1549,6 @@ const styles = StyleSheet.create({
   correctAnswerText: {
     fontWeight: "bold",
   },
-  nextButtonContainer: {
-    width: "100%",
-    borderRadius: 8,
-    overflow: "hidden",
-    elevation: 3,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-  },
-  nextButton: {
-    width: "100%",
-    padding: 15,
-    alignItems: "center",
-  },
-  nextButtonText: {
-    color: "white",
-    fontSize: 16,
-    fontWeight: "bold",
-  },
   fullReferenceLink: {
     marginTop: 12,
   },
@@ -837,6 +1565,23 @@ const styles = StyleSheet.create({
   fullReferenceIcon: {
     marginLeft: 3,
     color: "#888888",
+  },
+  // Progress indicator styles
+  progressContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    marginTop: 4,
+  },
+  progressDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
+  progressDotCurrent: {
+    borderWidth: 1,
+    borderColor: 'rgba(0,0,0,0.2)',
   },
   // Summary screen styles
   summaryContainer: {
@@ -861,13 +1606,31 @@ const styles = StyleSheet.create({
     fontWeight: "bold",
     marginBottom: 20,
   },
+  scoreCircleWrapper: {
+    position: 'relative',
+    width: 160,
+    height: 160,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 20,
+  },
+  scoreRingContainer: {
+    position: 'absolute',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  scoreRingBg: {
+    position: 'absolute',
+  },
+  scoreRingProgress: {
+    position: 'absolute',
+  },
   scoreCircle: {
     width: 140,
     height: 140,
     borderRadius: 70,
     justifyContent: "center",
     alignItems: "center",
-    marginBottom: 20,
   },
   scoreText: {
     fontSize: 36,
@@ -882,26 +1645,6 @@ const styles = StyleSheet.create({
     width: "100%",
     marginTop: 24,
     gap: 12,
-  },
-  playAgainButtonContainer: {
-    width: "100%",
-    borderRadius: 8,
-    overflow: "hidden",
-    elevation: 3,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-  },
-  playAgainButton: {
-    width: "100%",
-    padding: 15,
-    alignItems: "center",
-  },
-  playAgainButtonText: {
-    color: "white",
-    fontSize: 16,
-    fontWeight: "bold",
   },
   homeButtonContainer: {
     width: "100%",
@@ -1051,5 +1794,20 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 10,
     fontWeight: '500',
+  },
+  // Daily challenge styles
+  streakDisplay: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 16,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    backgroundColor: 'rgba(255, 107, 53, 0.1)',
+    borderRadius: 20,
+  },
+  streakDisplayText: {
+    fontSize: 16,
+    fontWeight: '600',
+    marginLeft: 8,
   },
 });

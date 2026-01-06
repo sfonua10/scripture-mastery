@@ -1,17 +1,18 @@
 import React from 'react';
 import {
-  Modal,
   View,
   StyleSheet,
   TouchableOpacity,
   ActivityIndicator,
   Platform,
 } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
+import * as Haptics from 'expo-haptics';
 import { ThemedText } from '@/components/ThemedText';
+import { BaseModal } from '@/components/BaseModal';
+import { GoogleLogo } from '@/components/GoogleLogo';
 import { Colors } from '@/constants/Colors';
 import { useColorScheme } from '@/hooks/useColorScheme';
-import { Ionicons } from '@expo/vector-icons';
-import { GoogleLogo } from '@/components/GoogleLogo';
 
 interface Props {
   visible: boolean;
@@ -34,10 +35,11 @@ export function AuthChoiceModal({
   isAppleLoading,
   isAppleAvailable,
 }: Props) {
-  const colorScheme = useColorScheme();
+  const colorScheme = useColorScheme() ?? 'light';
   const isLoading = isGoogleLoading || isAppleLoading;
 
   const handleGoogleSignIn = async () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     try {
       await onGoogleSignIn();
     } catch (error) {
@@ -46,6 +48,7 @@ export function AuthChoiceModal({
   };
 
   const handleAppleSignIn = async () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     try {
       await onAppleSignIn();
     } catch (error) {
@@ -53,167 +56,145 @@ export function AuthChoiceModal({
     }
   };
 
+  const handleContinueAsGuest = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    onContinueAsGuest();
+  };
+
   return (
-    <Modal
+    <BaseModal
       visible={visible}
-      transparent
-      animationType="fade"
-      onRequestClose={onClose}
+      onClose={onClose}
+      showCloseButton
+      animationType="smooth"
+      testID="auth-choice-modal"
+      accessibilityLabel="Join the Leaderboard - Choose sign in method"
     >
-      <View style={styles.overlay}>
-        <TouchableOpacity
-          style={styles.backdrop}
-          activeOpacity={1}
-          onPress={onClose}
-        />
+      <View style={styles.content}>
+        {/* Trophy Icon */}
+        <View style={styles.iconContainer}>
+          <Ionicons name="trophy" size={56} color="#FFD700" />
+        </View>
 
-        <View
-          style={[
-            styles.container,
-            { backgroundColor: Colors[colorScheme ?? 'light'].card },
-          ]}
-        >
-          <TouchableOpacity style={styles.closeButton} onPress={onClose}>
-            <Ionicons
-              name="close"
-              size={24}
-              color={Colors[colorScheme ?? 'light'].text}
-            />
-          </TouchableOpacity>
+        <ThemedText style={styles.title} accessibilityRole="header">
+          Join the Leaderboard
+        </ThemedText>
+        <ThemedText style={styles.subtitle}>
+          How would you like to join?
+        </ThemedText>
 
-          <View style={styles.iconContainer}>
-            <Ionicons name="trophy" size={56} color="#FFD700" />
-          </View>
+        <View style={styles.buttonContainer}>
+          {/* Apple Sign-In - Show first on iOS if available */}
+          {Platform.OS === 'ios' && isAppleAvailable && (
+            <>
+              <TouchableOpacity
+                style={[
+                  styles.appleButton,
+                  { opacity: isLoading ? 0.7 : 1 },
+                ]}
+                onPress={handleAppleSignIn}
+                disabled={isLoading}
+                accessibilityRole="button"
+                accessibilityLabel="Sign in with Apple"
+                accessibilityState={{ disabled: isLoading }}
+              >
+                {isAppleLoading ? (
+                  <ActivityIndicator color="#fff" />
+                ) : (
+                  <>
+                    <Ionicons name="logo-apple" size={20} color="#fff" />
+                    <ThemedText style={styles.appleButtonText}>
+                      Sign in with Apple
+                    </ThemedText>
+                  </>
+                )}
+              </TouchableOpacity>
 
-          <ThemedText style={styles.title}>Join the Leaderboard</ThemedText>
-          <ThemedText style={styles.subtitle}>
-            How would you like to join?
-          </ThemedText>
+              <View style={styles.buttonSpacer} />
+            </>
+          )}
 
-          <View style={styles.buttonContainer}>
-            {/* Apple Sign-In - Show first on iOS if available */}
-            {Platform.OS === 'ios' && isAppleAvailable && (
+          {/* Google Sign-In */}
+          <TouchableOpacity
+            style={[
+              styles.googleButton,
+              { opacity: isLoading ? 0.7 : 1 },
+            ]}
+            onPress={handleGoogleSignIn}
+            disabled={isLoading}
+            accessibilityRole="button"
+            accessibilityLabel="Sign in with Google"
+            accessibilityState={{ disabled: isLoading }}
+          >
+            {isGoogleLoading ? (
+              <ActivityIndicator color="#757575" />
+            ) : (
               <>
-                <TouchableOpacity
-                  style={[
-                    styles.appleButton,
-                    { opacity: isLoading ? 0.7 : 1 },
-                  ]}
-                  onPress={handleAppleSignIn}
-                  disabled={isLoading}
-                >
-                  {isAppleLoading ? (
-                    <ActivityIndicator color="#fff" />
-                  ) : (
-                    <>
-                      <Ionicons name="logo-apple" size={20} color="#fff" />
-                      <ThemedText style={styles.appleButtonText}>
-                        Sign in with Apple
-                      </ThemedText>
-                    </>
-                  )}
-                </TouchableOpacity>
-
-                <View style={styles.buttonSpacer} />
+                <GoogleLogo size={20} />
+                <ThemedText style={styles.googleButtonText}>
+                  Sign in with Google
+                </ThemedText>
               </>
             )}
+          </TouchableOpacity>
 
-            {/* Google Sign-In */}
-            <TouchableOpacity
+          <ThemedText style={styles.providerBenefit}>
+            Keep your scores across devices
+          </ThemedText>
+
+          {/* Divider */}
+          <View style={styles.dividerContainer}>
+            <View
               style={[
-                styles.googleButton,
-                { opacity: isLoading ? 0.7 : 1 },
+                styles.divider,
+                { backgroundColor: Colors[colorScheme].border },
               ]}
-              onPress={handleGoogleSignIn}
-              disabled={isLoading}
-            >
-              {isGoogleLoading ? (
-                <ActivityIndicator color="#757575" />
-              ) : (
-                <>
-                  <GoogleLogo size={20} />
-                  <ThemedText style={styles.googleButtonText}>
-                    Sign in with Google
-                  </ThemedText>
-                </>
-              )}
-            </TouchableOpacity>
-
-            <ThemedText style={styles.providerBenefit}>
-              Keep your scores across devices
-            </ThemedText>
-
-            <View style={styles.dividerContainer}>
-              <View
-                style={[
-                  styles.divider,
-                  { backgroundColor: Colors[colorScheme ?? 'light'].border },
-                ]}
-              />
-              <ThemedText style={styles.dividerText}>or</ThemedText>
-              <View
-                style={[
-                  styles.divider,
-                  { backgroundColor: Colors[colorScheme ?? 'light'].border },
-                ]}
-              />
-            </View>
-
-            <TouchableOpacity
+            />
+            <ThemedText style={styles.dividerText}>or</ThemedText>
+            <View
               style={[
-                styles.guestButton,
-                { borderColor: Colors[colorScheme ?? 'light'].border },
+                styles.divider,
+                { backgroundColor: Colors[colorScheme].border },
               ]}
-              onPress={onContinueAsGuest}
-              disabled={isLoading}
-            >
-              <Ionicons
-                name="person-outline"
-                size={20}
-                color={Colors[colorScheme ?? 'light'].text}
-              />
-              <ThemedText style={styles.guestButtonText}>
-                Continue as Guest
-              </ThemedText>
-            </TouchableOpacity>
-
-            <ThemedText style={styles.guestBenefit}>
-              Quick & anonymous
-            </ThemedText>
+            />
           </View>
+
+          {/* Guest Option */}
+          <TouchableOpacity
+            style={[
+              styles.guestButton,
+              { borderColor: Colors[colorScheme].border },
+            ]}
+            onPress={handleContinueAsGuest}
+            disabled={isLoading}
+            accessibilityRole="button"
+            accessibilityLabel="Continue as Guest"
+            accessibilityState={{ disabled: isLoading }}
+          >
+            <Ionicons
+              name="person-outline"
+              size={20}
+              color={Colors[colorScheme].text}
+            />
+            <ThemedText style={styles.guestButtonText}>
+              Continue as Guest
+            </ThemedText>
+          </TouchableOpacity>
+
+          <ThemedText style={styles.guestBenefit}>
+            Quick and anonymous
+          </ThemedText>
         </View>
       </View>
-    </Modal>
+    </BaseModal>
   );
 }
 
 const styles = StyleSheet.create({
-  overlay: {
-    flex: 1,
-    justifyContent: 'center',
+  content: {
     alignItems: 'center',
-  },
-  backdrop: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-  },
-  container: {
-    width: '85%',
-    maxWidth: 340,
-    borderRadius: 20,
-    padding: 24,
-    alignItems: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 8,
-  },
-  closeButton: {
-    position: 'absolute',
-    top: 12,
-    right: 12,
-    padding: 4,
+    width: '100%',
+    paddingTop: 8, // Account for close button
   },
   iconContainer: {
     marginBottom: 16,
@@ -244,6 +225,7 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     paddingHorizontal: 20,
     borderRadius: 10,
+    minHeight: 48, // Minimum touch target
   },
   appleButtonText: {
     color: '#fff',
@@ -265,6 +247,7 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     borderWidth: 1,
     borderColor: '#dadce0',
+    minHeight: 48, // Minimum touch target
   },
   googleButtonText: {
     color: '#3c4043',
@@ -302,6 +285,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     borderRadius: 10,
     borderWidth: 1,
+    minHeight: 48, // Minimum touch target
   },
   guestButtonText: {
     fontSize: 16,

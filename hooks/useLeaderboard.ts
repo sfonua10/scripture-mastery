@@ -19,6 +19,20 @@ import { useAuth } from '@/contexts/AuthContext';
 
 const LEADERBOARD_LIMIT = 100;
 
+// Helper to map Firestore document to LeaderboardEntry
+function mapLeaderboardDoc(doc: any): LeaderboardEntry {
+  const data = doc.data();
+  return {
+    id: doc.id,
+    documentId: data.documentId,
+    nickname: data.nickname,
+    difficulty: data.difficulty,
+    score: data.score,
+    timestamp: data.timestamp?.toDate() || new Date(),
+    photoURL: data.photoURL || null,
+  };
+}
+
 export function useLeaderboard(difficulty: GameMode) {
   const [entries, setEntries] = useState<LeaderboardEntry[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -34,8 +48,9 @@ export function useLeaderboard(difficulty: GameMode) {
 
   // Fetch leaderboard entries with real-time updates
   useEffect(() => {
-    // Don't fetch leaderboard if user is not authenticated
-    if (!user) {
+    // Don't fetch leaderboard if user is not authenticated or is an anonymous user
+    // who hasn't joined the leaderboard (e.g., fresh anonymous user after sign-out)
+    if (!user || (user.isAnonymous && !userProfile?.hasJoinedLeaderboard)) {
       setEntries([]);
       setIsLoading(false);
       return;
@@ -56,20 +71,18 @@ export function useLeaderboard(difficulty: GameMode) {
     const unsubscribe: Unsubscribe = onSnapshot(
       q,
       (snapshot) => {
-        const data: LeaderboardEntry[] = snapshot.docs.map((doc) => ({
-          id: doc.id,
-          documentId: doc.data().documentId,
-          nickname: doc.data().nickname,
-          difficulty: doc.data().difficulty,
-          score: doc.data().score,
-          timestamp: doc.data().timestamp?.toDate() || new Date(),
-          photoURL: doc.data().photoURL || null,
-        }));
-
+        const data = snapshot.docs.map(mapLeaderboardDoc);
         setEntries(data);
         setIsLoading(false);
       },
-      (err) => {
+      (err: any) => {
+        // Permission errors during sign-out are expected - the listener's auth
+        // is invalidated before React can clean it up. Handle gracefully.
+        if (err.code === 'permission-denied') {
+          setEntries([]);
+          setIsLoading(false);
+          return;
+        }
         console.error('Leaderboard fetch error:', err);
         setError('Failed to load leaderboard');
         setIsLoading(false);
@@ -77,11 +90,12 @@ export function useLeaderboard(difficulty: GameMode) {
     );
 
     return () => unsubscribe();
-  }, [difficulty, user]);
+  }, [difficulty, user, userProfile?.hasJoinedLeaderboard]);
 
   // Submit score to leaderboard (only keeps highest score per user per difficulty)
+  // photoURL can be passed directly to avoid React state timing issues
   const submitScore = useCallback(
-    async (score: number, nickname: string): Promise<boolean> => {
+    async (score: number, nickname: string, photoURLOverride?: string | null): Promise<boolean> => {
       if (!user) {
         setError('Not authenticated');
         return false;
@@ -99,7 +113,8 @@ export function useLeaderboard(difficulty: GameMode) {
         );
         const existingDocs = await getDocs(existingQuery);
 
-        const photoURL = userProfile?.photoURL || null;
+        // Use passed photoURL if provided, otherwise fall back to userProfile
+        const photoURL = photoURLOverride !== undefined ? photoURLOverride : (userProfile?.photoURL || null);
 
         if (existingDocs.empty) {
           // No existing entry - create new one
@@ -153,16 +168,7 @@ export function useLeaderboard(difficulty: GameMode) {
       );
 
       const snapshot = await getDocs(q);
-      const data: LeaderboardEntry[] = snapshot.docs.map((doc) => ({
-        id: doc.id,
-        documentId: doc.data().documentId,
-        nickname: doc.data().nickname,
-        difficulty: doc.data().difficulty,
-        score: doc.data().score,
-        timestamp: doc.data().timestamp?.toDate() || new Date(),
-        photoURL: doc.data().photoURL || null,
-      }));
-
+      const data = snapshot.docs.map(mapLeaderboardDoc);
       setEntries(data);
     } catch (err) {
       console.error('Refresh error:', err);

@@ -1,19 +1,18 @@
 import React, { useState, useEffect } from 'react';
 import {
-  Modal,
   View,
   StyleSheet,
   TextInput,
   TouchableOpacity,
-  KeyboardAvoidingView,
-  Platform,
   ActivityIndicator,
 } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
+import * as Haptics from 'expo-haptics';
 import { ThemedText } from '@/components/ThemedText';
+import { BaseModal } from '@/components/BaseModal';
 import { Colors } from '@/constants/Colors';
 import { useColorScheme } from '@/hooks/useColorScheme';
-import { LinearGradient } from 'expo-linear-gradient';
-import { Ionicons } from '@expo/vector-icons';
 
 interface Props {
   visible: boolean;
@@ -37,7 +36,7 @@ export function NicknameModal({
   title = 'Choose a Nickname',
   subtitle = 'This will be shown on the leaderboard',
 }: Props) {
-  const colorScheme = useColorScheme();
+  const colorScheme = useColorScheme() ?? 'light';
   // Use initialNickname if provided, otherwise use suggestedName from Google
   const [nickname, setNickname] = useState(initialNickname || suggestedName || '');
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -55,17 +54,20 @@ export function NicknameModal({
 
     if (trimmed.length < MIN_LENGTH) {
       setError(`Nickname must be at least ${MIN_LENGTH} characters`);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       return;
     }
 
     if (trimmed.length > MAX_LENGTH) {
       setError(`Nickname must be at most ${MAX_LENGTH} characters`);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       return;
     }
 
     // Basic validation - alphanumeric, spaces, underscores, hyphens
     if (!/^[\w\s\-]+$/.test(trimmed)) {
       setError('Only letters, numbers, spaces, and hyphens allowed');
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       return;
     }
 
@@ -75,8 +77,10 @@ export function NicknameModal({
     try {
       await onSubmit(trimmed);
       setNickname('');
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch (err) {
       setError('Failed to save nickname. Please try again.');
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
     } finally {
       setIsSubmitting(false);
     }
@@ -89,133 +93,104 @@ export function NicknameModal({
   };
 
   return (
-    <Modal
+    <BaseModal
       visible={visible}
-      transparent
-      animationType="fade"
-      onRequestClose={handleClose}
+      onClose={handleClose}
+      showCloseButton
+      keyboardAvoiding
+      animationType="smooth"
+      testID="nickname-modal"
+      accessibilityLabel={title}
     >
-      <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        style={styles.overlay}
-      >
-        <TouchableOpacity
-          style={styles.backdrop}
-          activeOpacity={1}
-          onPress={handleClose}
+      <View style={styles.content}>
+        {/* Icon */}
+        <View style={styles.iconContainer}>
+          <Ionicons
+            name="person-circle-outline"
+            size={64}
+            color={Colors[colorScheme].tint}
+          />
+        </View>
+
+        <ThemedText style={styles.title} accessibilityRole="header">
+          {title}
+        </ThemedText>
+        <ThemedText style={styles.subtitle}>{subtitle}</ThemedText>
+
+        {/* Input Field */}
+        <TextInput
+          style={[
+            styles.input,
+            {
+              borderColor: error
+                ? Colors[colorScheme].error
+                : Colors[colorScheme].border,
+              color: Colors[colorScheme].text,
+              backgroundColor: Colors[colorScheme].background,
+            },
+          ]}
+          placeholder="Enter nickname"
+          placeholderTextColor={colorScheme === 'dark' ? '#666' : '#888'}
+          value={nickname}
+          onChangeText={(text) => {
+            setNickname(text);
+            setError(null);
+          }}
+          maxLength={MAX_LENGTH}
+          autoCapitalize="none"
+          autoCorrect={false}
+          accessibilityLabel="Nickname input"
+          accessibilityHint={`Enter a nickname between ${MIN_LENGTH} and ${MAX_LENGTH} characters`}
         />
 
-        <View
-          style={[
-            styles.container,
-            { backgroundColor: Colors[colorScheme ?? 'light'].card },
-          ]}
-        >
-          <TouchableOpacity style={styles.closeButton} onPress={handleClose}>
-            <Ionicons
-              name="close"
-              size={24}
-              color={Colors[colorScheme ?? 'light'].text}
-            />
-          </TouchableOpacity>
+        <ThemedText style={styles.charCount}>
+          {nickname.length}/{MAX_LENGTH}
+        </ThemedText>
 
-          <View style={styles.iconContainer}>
-            <Ionicons
-              name="person-circle-outline"
-              size={64}
-              color={Colors[colorScheme ?? 'light'].tint}
-            />
-          </View>
-
-          <ThemedText style={styles.title}>{title}</ThemedText>
-          <ThemedText style={styles.subtitle}>{subtitle}</ThemedText>
-
-          <TextInput
-            style={[
-              styles.input,
-              {
-                borderColor: error
-                  ? Colors[colorScheme ?? 'light'].error
-                  : Colors[colorScheme ?? 'light'].border,
-                color: Colors[colorScheme ?? 'light'].text,
-                backgroundColor: Colors[colorScheme ?? 'light'].background,
-              },
-            ]}
-            placeholder="Enter nickname"
-            placeholderTextColor={colorScheme === 'dark' ? '#666' : '#888'}
-            value={nickname}
-            onChangeText={(text) => {
-              setNickname(text);
-              setError(null);
-            }}
-            maxLength={MAX_LENGTH}
-            autoCapitalize="none"
-            autoCorrect={false}
-          />
-
-          <ThemedText style={styles.charCount}>
-            {nickname.length}/{MAX_LENGTH}
+        {error && (
+          <ThemedText style={styles.error} accessibilityRole="alert">
+            {error}
           </ThemedText>
+        )}
 
-          {error && <ThemedText style={styles.error}>{error}</ThemedText>}
-
-          <TouchableOpacity
-            style={styles.submitButtonContainer}
-            onPress={handleSubmit}
-            disabled={isSubmitting}
+        {/* Submit Button */}
+        <TouchableOpacity
+          style={styles.submitButtonContainer}
+          onPress={handleSubmit}
+          disabled={isSubmitting}
+          accessibilityRole="button"
+          accessibilityLabel="Save nickname"
+          accessibilityState={{ disabled: isSubmitting }}
+        >
+          <LinearGradient
+            colors={
+              colorScheme === 'dark'
+                ? ['#1a7e7e', '#0a5e5e']
+                : ['#0a9ea4', '#087d7a']
+            }
+            style={[styles.submitButton, isSubmitting && styles.submitButtonDisabled]}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 0 }}
           >
-            <LinearGradient
-              colors={
-                colorScheme === 'dark'
-                  ? ['#1a7e7e', '#0a5e5e']
-                  : ['#0a9ea4', '#087d7a']
-              }
-              style={styles.submitButton}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 0 }}
-            >
-              {isSubmitting ? (
-                <ActivityIndicator color="white" />
-              ) : (
-                <ThemedText style={styles.submitButtonText}>
-                  Save Nickname
-                </ThemedText>
-              )}
-            </LinearGradient>
-          </TouchableOpacity>
-        </View>
-      </KeyboardAvoidingView>
-    </Modal>
+            {isSubmitting ? (
+              <ActivityIndicator color="white" />
+            ) : (
+              <ThemedText style={styles.submitButtonText}>
+                Save Nickname
+              </ThemedText>
+            )}
+          </LinearGradient>
+        </TouchableOpacity>
+      </View>
+    </BaseModal>
   );
 }
 
 const styles = StyleSheet.create({
-  overlay: {
-    flex: 1,
-    justifyContent: 'center',
+  content: {
     alignItems: 'center',
-  },
-  backdrop: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-  },
-  container: {
-    width: '85%',
-    maxWidth: 340,
-    borderRadius: 20,
-    padding: 24,
-    alignItems: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 8,
-  },
-  closeButton: {
-    position: 'absolute',
-    top: 12,
-    right: 12,
-    padding: 4,
+    width: '100%',
+    paddingTop: 8, // Account for close button
   },
   iconContainer: {
     marginBottom: 16,
@@ -239,6 +214,7 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     fontSize: 16,
     textAlign: 'center',
+    minHeight: 48, // Minimum touch target
   },
   charCount: {
     fontSize: 12,
@@ -261,6 +237,11 @@ const styles = StyleSheet.create({
   submitButton: {
     padding: 14,
     alignItems: 'center',
+    minHeight: 48, // Minimum touch target
+    justifyContent: 'center',
+  },
+  submitButtonDisabled: {
+    opacity: 0.7,
   },
   submitButtonText: {
     color: 'white',
