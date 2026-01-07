@@ -24,6 +24,7 @@ import { Colors } from '@/constants/Colors';
 import { useColorScheme } from '@/hooks/useColorScheme';
 import { useChallenge } from '@/hooks/useChallenge';
 import { useAuth } from '@/contexts/AuthContext';
+import { capitalize } from '@/utils/styleUtils';
 
 export default function ChallengeResultScreen() {
   const colorScheme = useColorScheme();
@@ -46,12 +47,15 @@ export default function ChallengeResultScreen() {
     : challenge?.creatorNickname;
   const isWinner = challenge?.winnerId === user?.uid;
   const isTie = challenge?.isTie;
-  const isComplete = challenge?.status === 'completed';
+  // Wait for winner data to be set before considering the challenge complete
+  // This prevents the race condition where status is 'completed' but winnerId/isTie aren't set yet
+  const isComplete = challenge?.status === 'completed' &&
+    (challenge?.winnerId !== undefined || challenge?.isTie === true);
   const waitingForOpponent = !isComplete && userScore !== undefined;
 
   useEffect(() => {
     // Animate in
-    Animated.parallel([
+    const animation = Animated.parallel([
       Animated.spring(scaleAnim, {
         toValue: 1,
         tension: 50,
@@ -63,13 +67,19 @@ export default function ChallengeResultScreen() {
         duration: 500,
         useNativeDriver: true,
       }),
-    ]).start();
+    ]);
+
+    animation.start();
 
     // Show confetti if winner
     if (isComplete && isWinner && !isTie) {
       setShowConfetti(true);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     }
+
+    return () => {
+      animation.stop();
+    };
   }, [isComplete, isWinner, isTie]);
 
   const handleShare = async () => {
@@ -115,17 +125,19 @@ export default function ChallengeResultScreen() {
   };
 
   const handleRematch = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     router.replace('/challenge/create');
   };
 
   const handleHome = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     router.replace('/(tabs)');
   };
 
   const getResultColor = () => {
     if (!isComplete) return colors.tint;
     if (isTie) return '#FFC107';
-    return isWinner ? '#4CAF50' : '#F44336';
+    return isWinner ? '#4CAF50' : colors.textSecondary;
   };
 
   const getResultIcon = () => {
@@ -137,7 +149,7 @@ export default function ChallengeResultScreen() {
   const getResultText = () => {
     if (!isComplete) return 'Waiting for opponent...';
     if (isTie) return "It's a Tie!";
-    return isWinner ? 'You Won!' : 'You Lost';
+    return isWinner ? 'You Won!' : 'Good Try!';
   };
 
   if (isLoading || !challenge) {
@@ -198,7 +210,7 @@ export default function ChallengeResultScreen() {
                 <View style={styles.shareDetailsRow}>
                   <View style={styles.shareDetailBadge}>
                     <Text style={styles.shareDetailText}>
-                      {challenge.difficulty.charAt(0).toUpperCase() + challenge.difficulty.slice(1)}
+                      {capitalize(challenge.difficulty)}
                     </Text>
                   </View>
                   <Text style={styles.shareDetailDot}>•</Text>
@@ -252,7 +264,7 @@ export default function ChallengeResultScreen() {
             >
               <Ionicons
                 name={getResultIcon() as any}
-                size={64}
+                size={52}
                 color={getResultColor()}
               />
             </View>
@@ -272,17 +284,14 @@ export default function ChallengeResultScreen() {
                     isComplete && isWinner && !isTie && styles.winnerScore,
                   ]}
                 >
-                  {userScore ?? '-'}
-                </ThemedText>
-                <ThemedText style={styles.scoreTotal}>
-                  /{challenge.questionCount}
+                  {typeof userScore === 'number' ? userScore : '-'}/{challenge.questionCount}
                 </ThemedText>
               </View>
 
               {/* VS */}
               <View style={styles.vsContainer}>
-                <ThemedText style={[styles.vsText, { color: colors.tint }]}>
-                  VS
+                <ThemedText style={[styles.vsText, { color: colors.textSecondary }]}>
+                  vs
                 </ThemedText>
               </View>
 
@@ -297,10 +306,7 @@ export default function ChallengeResultScreen() {
                     isComplete && !isWinner && !isTie && styles.winnerScore,
                   ]}
                 >
-                  {isComplete ? opponentScore ?? '-' : '?'}
-                </ThemedText>
-                <ThemedText style={styles.scoreTotal}>
-                  /{challenge.questionCount}
+                  {isComplete ? (typeof opponentScore === 'number' ? opponentScore : '-') : '?'}/{challenge.questionCount}
                 </ThemedText>
               </View>
             </View>
@@ -310,9 +316,7 @@ export default function ChallengeResultScreen() {
               <View style={styles.infoRow}>
                 <Ionicons name="speedometer-outline" size={18} color={colors.text + '80'} />
                 <ThemedText style={styles.infoText}>
-                  {challenge.difficulty.charAt(0).toUpperCase() +
-                    challenge.difficulty.slice(1)}{' '}
-                  Difficulty
+                  {capitalize(challenge.difficulty)} Difficulty
                 </ThemedText>
               </View>
             </View>
@@ -329,7 +333,12 @@ export default function ChallengeResultScreen() {
 
           {/* Action buttons */}
           <View style={styles.actions}>
-            <TouchableOpacity style={styles.buttonContainer} onPress={handleShare}>
+            <TouchableOpacity
+              style={styles.buttonContainer}
+              onPress={handleShare}
+              accessibilityRole="button"
+              accessibilityLabel={waitingForOpponent ? 'Share challenge with friends' : 'Share your result'}
+            >
               <LinearGradient
                 colors={[colors.tint, colors.tint + 'dd']}
                 style={styles.actionButton}
@@ -344,7 +353,12 @@ export default function ChallengeResultScreen() {
             </TouchableOpacity>
 
             {isComplete && (
-              <TouchableOpacity style={styles.buttonContainer} onPress={handleRematch}>
+              <TouchableOpacity
+                style={styles.buttonContainer}
+                onPress={handleRematch}
+                accessibilityRole="button"
+                accessibilityLabel="Create a new challenge"
+              >
                 <LinearGradient
                   colors={['#4CAF50', '#388E3C']}
                   style={styles.actionButton}
@@ -357,7 +371,12 @@ export default function ChallengeResultScreen() {
               </TouchableOpacity>
             )}
 
-            <TouchableOpacity style={styles.homeButton} onPress={handleHome}>
+            <TouchableOpacity
+              style={styles.homeButton}
+              onPress={handleHome}
+              accessibilityRole="button"
+              accessibilityLabel="Return to home screen"
+            >
               <ThemedText style={[styles.homeButtonText, { color: colors.tint }]}>
                 Back to Home
               </ThemedText>
@@ -388,18 +407,17 @@ const styles = StyleSheet.create({
     marginBottom: 32,
   },
   resultIcon: {
-    width: 120,
-    height: 120,
-    borderRadius: 60,
+    width: 100,
+    height: 100,
+    borderRadius: 50,
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 16,
   },
   resultText: {
-    fontSize: 36,
+    fontSize: 32,
     fontWeight: 'bold',
     marginBottom: 24,
-    paddingTop: 16,
   },
   scoreCard: {
     flexDirection: 'row',
@@ -422,23 +440,20 @@ const styles = StyleSheet.create({
     maxWidth: 100,
   },
   scoreValue: {
-    fontSize: 48,
+    fontSize: 36,
     fontWeight: 'bold',
     marginTop: 8,
   },
   winnerScore: {
     color: '#4CAF50',
   },
-  scoreTotal: {
-    fontSize: 18,
-    opacity: 0.5,
-  },
   vsContainer: {
-    paddingHorizontal: 20,
+    paddingHorizontal: 16,
   },
   vsText: {
-    fontSize: 24,
-    fontWeight: 'bold',
+    fontSize: 16,
+    fontWeight: '500',
+    opacity: 0.6,
   },
   infoContainer: {
     alignItems: 'center',

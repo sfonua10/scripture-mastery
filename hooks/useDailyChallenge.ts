@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   DailyChallengeStats,
@@ -39,6 +39,9 @@ export function useDailyChallenge() {
   const [todayResult, setTodayResult] = useState<DailyChallengeResult | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
+  // Guard against concurrent completions (rapid taps)
+  const isCompletingRef = useRef(false);
+
   const dailyScripture: Scripture = getDailyScripture();
   const todayDateString = getTodayDateString();
 
@@ -51,8 +54,11 @@ export function useDailyChallenge() {
     }
   }, []);
 
-  const loadStats = useCallback(async () => {
-    setIsLoading(true);
+  const loadStats = useCallback(async (isInitialLoad = false) => {
+    // Only show loading state on initial load to prevent UI flash on refresh
+    if (isInitialLoad) {
+      setIsLoading(true);
+    }
     try {
       const storedStats = await AsyncStorage.getItem(DAILY_CHALLENGE_STATS_KEY);
       const storedHistory = await AsyncStorage.getItem(DAILY_CHALLENGE_HISTORY_KEY);
@@ -91,7 +97,7 @@ export function useDailyChallenge() {
   }, [todayDateString]);
 
   useEffect(() => {
-    loadStats();
+    loadStats(true); // Initial load - show loading state
   }, [loadStats]);
 
   const checkForNewBadges = useCallback(
@@ -130,9 +136,12 @@ export function useDailyChallenge() {
 
   const completeDailyChallenge = useCallback(
     async (correct: boolean): Promise<DailyChallengeBadge[]> => {
-      if (todayCompleted) {
+      // Prevent concurrent completions from rapid taps
+      if (todayCompleted || isCompletingRef.current) {
         return [];
       }
+
+      isCompletingRef.current = true;
 
       const newResult: DailyChallengeResult = {
         date: todayDateString,
@@ -180,6 +189,8 @@ export function useDailyChallenge() {
       } catch (error) {
         console.error('Error saving daily challenge:', error);
         return []; // Return empty array on error
+      } finally {
+        isCompletingRef.current = false;
       }
     },
     [stats, todayDateString, todayCompleted, checkForNewBadges, getHistory]

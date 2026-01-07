@@ -15,6 +15,7 @@ import {
   Image,
   AccessibilityInfo,
   Keyboard,
+  InteractionManager,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { router, useLocalSearchParams, Stack } from "expo-router";
@@ -405,10 +406,13 @@ function AnimatedInput({
     }
   }, [shouldShake]);
 
+  // Teal focus color to match the teal button variant
+  const tealFocusColor = colorScheme === 'dark' ? '#1a7e7e' : '#0a9ea4';
+
   const inputContainerStyle = useAnimatedStyle(() => ({
     transform: [{ translateX: translateX.value }],
     borderWidth: borderWidth.value,
-    borderColor: isFocused ? colors.tint : colors.border,
+    borderColor: isFocused ? tealFocusColor : colors.border,
   }));
 
   const glowStyle = useAnimatedStyle(() => ({
@@ -422,8 +426,8 @@ function AnimatedInput({
         style={[
           styles.inputGlow,
           {
-            backgroundColor: colors.tint,
-            shadowColor: colors.tint,
+            backgroundColor: tealFocusColor,
+            shadowColor: tealFocusColor,
           },
           glowStyle,
         ]}
@@ -480,7 +484,7 @@ function AnimatedSubmitButton({ onPress, loading, disabled, label }: AnimatedSub
       <GradientButton
         onPress={onPress}
         label={label}
-        variant="primary"
+        variant="teal"
         loading={loading}
         disabled={disabled}
       />
@@ -662,6 +666,11 @@ export default function GameScreen() {
     Array(totalQuestions).fill('pending')
   );
 
+  // Reinitialize answerHistory when totalQuestions changes (e.g., challenge loads)
+  useEffect(() => {
+    setAnswerHistory(Array(totalQuestions).fill('pending'));
+  }, [totalQuestions]);
+
   const shareCardRef = useRef<View>(null);
   const isMountedRef = useRef(true);
   const submitTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -671,9 +680,21 @@ export default function GameScreen() {
   const scoreAnimation = useSharedValue(0);
   const circleScale = useSharedValue(0.8);
 
+  // Streak celebration animation values
+  const streakScale = useSharedValue(0);
+  const streakRotation = useSharedValue(-15);
+
   // Animated style for the score circle
   const animatedCircleStyle = useAnimatedStyle(() => ({
     transform: [{ scale: circleScale.value }],
+  }));
+
+  // Animated style for streak hero (bounce + wiggle)
+  const animatedStreakStyle = useAnimatedStyle(() => ({
+    transform: [
+      { scale: streakScale.value },
+      { rotate: `${streakRotation.value}deg` },
+    ],
   }));
 
   useEffect(() => {
@@ -789,18 +810,34 @@ export default function GameScreen() {
   // Trigger score animation when summary card appears
   useEffect(() => {
     if (showSummaryCard) {
-      // Count up animation
+      // Count up animation (for regular game)
       scoreAnimation.value = withTiming(correctCount, {
         duration: 1500,
         easing: Easing.out(Easing.cubic),
       });
-      // Pop/bounce effect
+      // Pop/bounce effect (for regular game)
       circleScale.value = withSpring(1, {
         damping: 12,
         stiffness: 150,
       });
+
+      // Streak celebration animation (for daily challenge)
+      if (isDailyChallenge) {
+        // Bounce in with overshoot
+        streakScale.value = withSequence(
+          withSpring(1.2, { damping: 8, stiffness: 200 }),
+          withSpring(1, { damping: 12, stiffness: 150 })
+        );
+        // Wiggle effect
+        streakRotation.value = withSequence(
+          withTiming(15, { duration: 150 }),
+          withTiming(-10, { duration: 150 }),
+          withTiming(5, { duration: 150 }),
+          withTiming(0, { duration: 150 })
+        );
+      }
     }
-  }, [showSummaryCard, correctCount]);
+  }, [showSummaryCard, correctCount, isDailyChallenge]);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -957,16 +994,29 @@ export default function GameScreen() {
   const handleShare = async () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     const APP_STORE_LINK = 'https://apps.apple.com/us/app/scripture-mastery-pro/id6742937573';
-    const message = `I got ${correctCount}/${TOTAL_QUESTIONS} on Scripture Mastery! Can you beat my score?\n${APP_STORE_LINK}`;
+    const message = `I got ${correctCount}/${totalQuestions} on Scripture Mastery! Can you beat my score?\n${APP_STORE_LINK}`;
 
     try {
+      // Ensure the view is fully rendered before capture (important for Android)
+      await new Promise<void>(resolve => {
+        InteractionManager.runAfterInteractions(() => resolve());
+      });
+
       const uri = await captureRef(shareCardRef, {
         format: 'png',
         quality: 1,
       });
-      await Sharing.shareAsync(uri, {
-        dialogTitle: message,
-      });
+
+      if (Platform.OS === 'ios') {
+        await Share.share({
+          message,
+          url: uri,
+        });
+      } else {
+        await Sharing.shareAsync(uri, {
+          dialogTitle: message,
+        });
+      }
     } catch (error) {
       // Fallback to text share
       await Share.share({ message });
@@ -981,11 +1031,11 @@ export default function GameScreen() {
   const getPlaceholderText = () => {
     switch (effectiveMode) {
       case "easy":
-        return 'Enter book name (e.g., "John")';
+        return 'e.g., John';
       case "medium":
-        return 'Enter book and chapter (e.g., "John 3")';
+        return 'e.g., John 3';
       case "hard":
-        return 'Enter book, chapter, and verse (e.g., "John 3:16")';
+        return 'e.g., John 3:16';
       default:
         return "Enter your guess";
     }
@@ -1034,6 +1084,16 @@ export default function GameScreen() {
         return "Hard Mode";
       default:
         return "Scripture Mastery";
+    }
+  };
+
+  const getSimpleDifficulty = () => {
+    if (isDailyChallenge) return 'Daily';
+    switch (effectiveMode) {
+      case 'easy': return 'Easy';
+      case 'medium': return 'Medium';
+      case 'hard': return 'Hard';
+      default: return 'Easy';
     }
   };
 
@@ -1097,7 +1157,8 @@ export default function GameScreen() {
 
       {sessionComplete ? (
         <ThemedView style={styles.summaryContainer}>
-          {correctCount >= 8 && (
+          {/* Confetti for high scores OR streak milestones (7, 14, 30 days) */}
+          {(correctCount >= 8 || (isDailyChallenge && [7, 14, 30].includes(dailyStats.currentStreak))) && (
             <ConfettiCannon
               count={200}
               origin={{ x: -10, y: 0 }}
@@ -1108,44 +1169,70 @@ export default function GameScreen() {
 
           {showSummaryCard && (
             <>
-              {/* Hidden shareable card for capturing */}
+              {/* Hidden shareable card for capturing - Image-Dominant Design */}
               <View style={styles.shareCardWrapper}>
-                <View ref={shareCardRef} style={styles.shareCard}>
-                  {/* Image section with gradient overlay */}
-                  <View style={styles.shareImageContainer}>
+                <View ref={shareCardRef} style={styles.shareCard} collapsable={false}>
+                  {/* IMAGE SECTION - 70% of card (420px) */}
+                  <View style={styles.shareImageSection}>
                     <Image
                       source={require('@/assets/images/scriptorian.jpeg')}
                       style={styles.shareCardBanner}
                     />
+                    {/* Gradient overlay for text legibility */}
                     <LinearGradient
-                      colors={['transparent', 'rgba(0,0,0,0.7)']}
+                      colors={['transparent', 'transparent', 'rgba(0,0,0,0.5)']}
+                      locations={[0, 0.5, 1]}
                       style={styles.shareImageOverlay}
                     />
+
+                    {/* "BEAT MY SCORE" pill - top left */}
+                    <View style={styles.shareBeatScorePill}>
+                      <Text style={styles.shareBeatScoreText}>BEAT MY SCORE!</Text>
+                    </View>
+
+                    {/* Trophy badge - top right with glow */}
+                    <View style={styles.shareTrophyBadge}>
+                      <Ionicons name="trophy" size={28} color="#fff" />
+                    </View>
+
+                    {/* Floating glassmorphism score badge - overlaps into content */}
+                    <View style={styles.shareFloatingScore}>
+                      <Text style={[styles.shareScoreNumber, { color: getScoreColor().text }]}>
+                        {correctCount}
+                      </Text>
+                      <Text style={styles.shareScoreDivider}>/</Text>
+                      <Text style={styles.shareScoreTotal}>{totalQuestions}</Text>
+                    </View>
                   </View>
 
-                  {/* Floating score circle */}
-                  <View style={[styles.shareScoreCircle, { backgroundColor: getScoreColor().bg, borderColor: '#fff' }]}>
-                    <Text style={[styles.shareScoreText, { color: getScoreColor().text }]}>
-                      {correctCount}/{TOTAL_QUESTIONS}
-                    </Text>
-                  </View>
-
-                  {/* Content section */}
+                  {/* CONTENT SECTION - 30% of card */}
                   <View style={styles.shareCardContent}>
-                    <Text style={styles.shareCardMessage}>CAN YOU BEAT ME?</Text>
-                    <Text style={styles.shareCardDifficulty}>{getDifficultyTitle()}</Text>
+                    {/* Challenge code section - only in challenge mode */}
+                    {isChallengeMode && challenge && (
+                      <View style={styles.shareChallengeCodeSection}>
+                        <Text style={styles.shareChallengeCodeLabel}>CHALLENGE CODE</Text>
+                        <Text style={styles.shareChallengeCodeValue}>{challenge.challengeCode}</Text>
+                      </View>
+                    )}
 
-                    {/* Bottom bar with icon, name, and App Store badge */}
+                    {/* Difficulty and question count pills */}
+                    <View style={styles.sharePillsRow}>
+                      <View style={styles.sharePill}>
+                        <Text style={styles.sharePillText}>{getSimpleDifficulty()}</Text>
+                      </View>
+                      <Text style={styles.sharePillDot}>•</Text>
+                      <View style={styles.sharePill}>
+                        <Text style={styles.sharePillText}>{totalQuestions} Questions</Text>
+                      </View>
+                    </View>
+
+                    {/* Bottom bar with icon and name */}
                     <View style={styles.shareBottomBar}>
                       <Image
                         source={require('@/assets/icons/ios-light.png')}
                         style={styles.shareAppIcon}
                       />
                       <Text style={styles.shareAppName}>Scripture Mastery Pro</Text>
-                      <View style={styles.appStoreBadge}>
-                        <Ionicons name="logo-apple" size={12} color="#fff" />
-                        <Text style={styles.appStoreBadgeText}>App Store</Text>
-                      </View>
                     </View>
                   </View>
                 </View>
@@ -1158,25 +1245,39 @@ export default function GameScreen() {
 
             {isDailyChallenge ? (
               <>
+                {/* Hero Streak Display - Animated */}
+                <Animated.View style={[styles.dailyStreakHero, animatedStreakStyle]}>
+                  <Ionicons name="flame" size={32} color="#ff6b35" />
+                  <ThemedText style={styles.dailyStreakNumber}>
+                    {dailyStats.currentStreak}
+                  </ThemedText>
+                  <ThemedText style={styles.dailyStreakLabel}>
+                    day{dailyStats.currentStreak === 1 ? '' : 's'} streak
+                  </ThemedText>
+                </Animated.View>
+
+                {/* Result Badge */}
                 <View style={[
-                  styles.scoreCircle,
-                  { backgroundColor: correctCount > 0 ? "#e6f7e6" : "#ffebee" }
+                  styles.dailyResultBadge,
+                  { backgroundColor: correctCount > 0 ? colors.successLight : colors.errorLight }
                 ]}>
                   <Ionicons
-                    name={correctCount > 0 ? "checkmark-circle" : "close-circle"}
-                    size={60}
-                    color={correctCount > 0 ? "#4CAF50" : "#F44336"}
+                    name={correctCount > 0 ? "checkmark" : "close"}
+                    size={20}
+                    color={correctCount > 0 ? colors.success : colors.error}
                   />
-                </View>
-                <ThemedText style={styles.summaryMessage}>
-                  {correctCount > 0 ? "Correct!" : "Better luck tomorrow!"}
-                </ThemedText>
-                <View style={styles.streakDisplay}>
-                  <Ionicons name="flame" size={24} color="#ff6b35" />
-                  <ThemedText style={styles.streakDisplayText}>
-                    {dailyStats.currentStreak} day streak
+                  <ThemedText style={[
+                    styles.dailyResultText,
+                    { color: correctCount > 0 ? colors.success : colors.error }
+                  ]}>
+                    {correctCount > 0 ? "Correct!" : "Incorrect"}
                   </ThemedText>
                 </View>
+
+                {/* Encouragement Text */}
+                <ThemedText style={styles.dailyEncouragement}>
+                  {correctCount > 0 ? "Keep it going!" : "Come back tomorrow!"}
+                </ThemedText>
               </>
             ) : (
               <>
@@ -1205,62 +1306,81 @@ export default function GameScreen() {
               </>
             )}
 
-            <View style={styles.summaryButtons}>
-              {isDailyChallenge ? (
+            {isDailyChallenge ? (
+              /* Daily Challenge Buttons - New hierarchy */
+              <View style={styles.dailySummaryButtons}>
+                {/* Primary CTA: Share Your Streak */}
                 <GradientButton
-                  onPress={handlePlayRegularGame}
-                  label="Play Regular Game"
-                  variant="teal"
+                  onPress={handleShare}
+                  label={`Share Your ${dailyStats.currentStreak}-Day Streak`}
+                  variant="warm"
+                  icon={<Ionicons name="share-outline" size={18} color="white" />}
                 />
-              ) : (
+
+                {/* Secondary Actions Row */}
+                <View style={styles.secondaryActionsRow}>
+                  <TouchableOpacity
+                    style={[styles.secondaryAction, { borderColor: colors.border }]}
+                    onPress={handlePlayRegularGame}
+                    accessibilityLabel="Play regular game"
+                    accessibilityRole="button"
+                  >
+                    <Ionicons name="play-outline" size={18} color={colors.textSecondary} />
+                    <ThemedText style={[styles.secondaryActionText, { color: colors.textSecondary }]}>
+                      Play Game
+                    </ThemedText>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={[styles.secondaryAction, { borderColor: colors.border }]}
+                    onPress={handleViewLeaderboard}
+                    accessibilityLabel="View leaderboard"
+                    accessibilityRole="button"
+                  >
+                    <Ionicons name="trophy-outline" size={18} color={colors.textSecondary} />
+                    <ThemedText style={[styles.secondaryActionText, { color: colors.textSecondary }]}>
+                      Leaderboard
+                    </ThemedText>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            ) : (
+              /* Regular Game Buttons */
+              <View style={styles.summaryButtons}>
                 <GradientButton
                   onPress={handlePlayAgain}
                   label="Play Again"
                   variant="teal"
                 />
-              )}
 
-              <TouchableOpacity
-                style={styles.shareButtonContainer}
-                onPress={handleShare}
-                accessibilityLabel="Share your score"
-                accessibilityRole="button"
-              >
-                <View style={[styles.shareButton, { borderColor: colors.tint }]}>
-                  <ThemedText style={[styles.shareButtonText, { color: colors.tint }]}>
-                    Share Score
-                  </ThemedText>
-                </View>
-              </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.shareButtonContainer}
+                  onPress={handleShare}
+                  accessibilityLabel="Share your score"
+                  accessibilityRole="button"
+                >
+                  <View style={[styles.shareButton, { borderColor: colors.tint }]}>
+                    <ThemedText style={[styles.shareButtonText, { color: colors.tint }]}>
+                      Share Score
+                    </ThemedText>
+                  </View>
+                </TouchableOpacity>
 
-              <TouchableOpacity
-                style={styles.leaderboardButtonContainer}
-                onPress={handleViewLeaderboard}
-                accessibilityLabel="View leaderboard"
-                accessibilityRole="button"
-              >
-                <View style={[styles.leaderboardButton, { borderColor: colors.tint }]}>
-                  <Ionicons name="trophy-outline" size={18} color={colors.tint} style={{ marginRight: 6 }} />
-                  <ThemedText style={[styles.leaderboardButtonText, { color: colors.tint }]}>
-                    View Leaderboard
-                  </ThemedText>
-                </View>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={styles.homeButtonContainer}
-                onPress={() => {
-                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                  router.back();
-                }}
-                accessibilityLabel="Return home"
-                accessibilityRole="button"
-              >
-                <View style={[styles.homeButton, { borderColor: colors.border }]}>
-                  <ThemedText style={styles.homeButtonText}>Home</ThemedText>
-                </View>
-              </TouchableOpacity>
-            </View>
+                <TouchableOpacity
+                  style={styles.leaderboardButtonContainer}
+                  onPress={handleViewLeaderboard}
+                  accessibilityLabel="View leaderboard"
+                  accessibilityRole="button"
+                >
+                  <View style={[styles.leaderboardButton, { borderColor: colors.tint }]}>
+                    <Ionicons name="trophy-outline" size={18} color={colors.tint} style={{ marginRight: 6 }} />
+                    <ThemedText style={[styles.leaderboardButtonText, { color: colors.tint }]}>
+                      View Leaderboard
+                    </ThemedText>
+                  </View>
+                </TouchableOpacity>
+              </View>
+            )}
           </AnimatedSummaryCard>
             </>
           )}
@@ -1449,6 +1569,7 @@ const styles = StyleSheet.create({
     width: "100%",
     padding: 15,
     fontSize: 16,
+    letterSpacing: 0,
   },
   guessInput: {
     width: "100%",
@@ -1572,7 +1693,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: 6,
-    marginTop: 4,
+    marginTop: 12,
   },
   progressDot: {
     width: 8,
@@ -1690,22 +1811,26 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: "600",
   },
-  // Hidden shareable card styles
+  // Hidden shareable card styles - Image-Dominant Design
   shareCardWrapper: {
     position: 'absolute',
-    left: -9999,
-    top: -9999,
+    left: 0,
+    top: 0,
+    opacity: 0,
+    pointerEvents: 'none',
   },
   shareCard: {
-    width: 350,
-    borderRadius: 20,
+    width: 400,
+    height: 600,
+    borderRadius: 24,
     overflow: 'hidden',
     backgroundColor: '#ffffff',
   },
-  shareImageContainer: {
-    position: 'relative',
+  // IMAGE SECTION
+  shareImageSection: {
     width: '100%',
-    height: 220,
+    height: 370,
+    position: 'relative',
   },
   shareCardBanner: {
     width: '100%',
@@ -1713,89 +1838,213 @@ const styles = StyleSheet.create({
     resizeMode: 'cover',
   },
   shareImageOverlay: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  // "BEAT MY SCORE" pill - top left on image
+  shareBeatScorePill: {
     position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    height: '60%',
+    top: 20,
+    left: 20,
+    backgroundColor: 'rgba(0, 0, 0, 0.6)',
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderRadius: 20,
   },
-  shareScoreCircle: {
-    width: 110,
-    height: 110,
-    borderRadius: 55,
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: 4,
-    position: 'absolute',
-    top: 165,
-    alignSelf: 'center',
-    left: '50%',
-    marginLeft: -55,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 8,
-    zIndex: 10,
-  },
-  shareScoreText: {
-    fontSize: 32,
-    fontWeight: 'bold',
-  },
-  shareCardContent: {
-    paddingTop: 70,
-    paddingBottom: 20,
-    paddingHorizontal: 20,
-    alignItems: 'center',
-    backgroundColor: '#fff',
-  },
-  shareCardMessage: {
-    fontSize: 24,
-    fontWeight: '800',
-    color: '#0a9ea4',
+  shareBeatScoreText: {
+    color: '#ffffff',
+    fontSize: 14,
+    fontWeight: '700',
     letterSpacing: 1,
+  },
+  // Trophy badge - top right on image
+  shareTrophyBadge: {
+    position: 'absolute',
+    top: 20,
+    right: 20,
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: '#F59E0B',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 3,
+    borderColor: 'rgba(255, 255, 255, 0.9)',
+    shadowColor: '#F59E0B',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.4,
+    shadowRadius: 12,
+    elevation: 8,
+  },
+  // Floating glassmorphism score badge - overlaps image/content (centered)
+  shareFloatingScore: {
+    position: 'absolute',
+    bottom: -40,
+    left: '50%',
+    transform: [{ translateX: -70 }],
+    width: 140,
+    zIndex: 10,
+    backgroundColor: 'rgba(255, 255, 255, 0.95)',
+    paddingVertical: 12,
+    paddingHorizontal: 32,
+    borderRadius: 24,
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.15,
+    shadowRadius: 24,
+    elevation: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.5)',
+  },
+  shareScoreNumber: {
+    fontSize: 56,
+    fontWeight: '800',
+    letterSpacing: -2,
+  },
+  shareScoreDivider: {
+    fontSize: 36,
+    fontWeight: '300',
+    color: '#9CA3AF',
+    marginHorizontal: 2,
+  },
+  shareScoreTotal: {
+    fontSize: 36,
+    fontWeight: '600',
+    color: '#6B7280',
+  },
+  // CONTENT SECTION
+  shareCardContent: {
+    flex: 1,
+    paddingTop: 56,
+    paddingHorizontal: 24,
+    paddingBottom: 20,
+    alignItems: 'center',
+    justifyContent: 'flex-start',
+    backgroundColor: '#fff',
+    gap: 12,
+  },
+  // Challenge code section styles
+  shareChallengeCodeSection: {
+    backgroundColor: '#FEF3C7',
+    paddingVertical: 12,
+    paddingHorizontal: 24,
+    borderRadius: 16,
+    alignItems: 'center',
+    marginTop: 4,
+  },
+  shareChallengeCodeLabel: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#92400E',
+    letterSpacing: 2,
     marginBottom: 4,
   },
-  shareCardDifficulty: {
-    fontSize: 12,
-    fontWeight: '400',
-    color: '#999',
-    marginBottom: 20,
-    textTransform: 'lowercase',
+  shareChallengeCodeValue: {
+    fontSize: 24,
+    fontWeight: '800',
+    color: '#D97706',
+    letterSpacing: 4,
+  },
+  // Pills row styles
+  sharePillsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  sharePill: {
+    backgroundColor: '#F3F4F6',
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderRadius: 20,
+  },
+  sharePillText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#6B7280',
+  },
+  sharePillDot: {
+    fontSize: 14,
+    color: '#9CA3AF',
   },
   shareBottomBar: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
+    marginTop: 'auto',
     gap: 8,
-    width: '100%',
   },
   shareAppIcon: {
-    width: 28,
-    height: 28,
+    width: 24,
+    height: 24,
     borderRadius: 6,
   },
   shareAppName: {
-    fontSize: 13,
+    fontSize: 16,
     fontWeight: '600',
-    color: '#333',
-    flex: 1,
+    color: '#374151',
   },
-  appStoreBadge: {
+  // Daily challenge styles - New streak hero design
+  dailyStreakHero: {
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  dailyStreakNumber: {
+    fontSize: 64,
+    fontWeight: '800',
+    color: '#ff6b35',
+    lineHeight: 72,
+    marginTop: 8,
+  },
+  dailyStreakLabel: {
+    fontSize: 16,
+    fontWeight: '500',
+    opacity: 0.7,
+    marginTop: -4,
+  },
+  dailyResultBadge: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#000',
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 5,
-    gap: 4,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 20,
+    gap: 6,
+    marginBottom: 8,
   },
-  appStoreBadgeText: {
-    color: '#fff',
-    fontSize: 10,
+  dailyResultText: {
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  dailyEncouragement: {
+    fontSize: 16,
+    opacity: 0.6,
+    marginBottom: 8,
+  },
+  dailySummaryButtons: {
+    width: '100%',
+    marginTop: 24,
+    gap: 16,
+  },
+  secondaryActionsRow: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  secondaryAction: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 14,
+    borderRadius: 10,
+    borderWidth: 1,
+  },
+  secondaryActionText: {
+    fontSize: 15,
     fontWeight: '500',
   },
-  // Daily challenge styles
+  // Legacy daily challenge styles (kept for reference)
   streakDisplay: {
     flexDirection: 'row',
     alignItems: 'center',

@@ -36,12 +36,12 @@ export const Colors = {
   light: {
     // Base Colors
     text: '#11181C',
-    background: '#ffffff',
+    background: '#fffdfb',  // Warm off-white for cohesive feel
     tint: tintColorLight,
     icon: '#687076',
     tabIconDefault: '#687076',
     tabIconSelected: tintColorLight,
-    card: '#f9f9f9',
+    card: '#fdfaf7',  // Warm cream
     border: '#e0e0e0',
     buttonText: '#ffffff',
 
@@ -57,9 +57,9 @@ export const Colors = {
 
     // Surface Colors - Layered Backgrounds
     /** Base background color */
-    surface: '#ffffff',
+    surface: '#fffdfb',  // Warm off-white
     /** Slightly elevated surface (cards, list items) */
-    surfaceElevated: '#f9f9f9',
+    surfaceElevated: '#fdfaf7',  // Warm cream
     /** Secondary elevated surface (nested cards, modals) */
     surfaceSecondary: '#f3f4f6',
     /** Tertiary surface for subtle containers */
@@ -100,7 +100,7 @@ export const Colors = {
     accentSecondary: accentBlue.light,
 
     // Input Colors
-    inputBackground: '#f9f9f9',
+    inputBackground: '#fdfaf7',  // Warm cream
     inputBorder: '#e0e0e0',
     inputBorderFocus: tintColorLight,
     inputPlaceholder: '#9BA1A6',

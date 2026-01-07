@@ -8,6 +8,7 @@ import {
   Alert,
   KeyboardAvoidingView,
   Platform,
+  Image,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, Stack, useLocalSearchParams } from 'expo-router';
@@ -17,30 +18,44 @@ import * as Haptics from 'expo-haptics';
 
 import { ThemedText } from '@/components/ThemedText';
 import { ThemedView } from '@/components/ThemedView';
+import { NicknameModal } from '@/components/NicknameModal';
 import { Colors } from '@/constants/Colors';
 import { useColorScheme } from '@/hooks/useColorScheme';
 import { useChallenge } from '@/hooks/useChallenge';
 import { useAuth } from '@/contexts/AuthContext';
 import { Challenge, GameMode } from '@/types/scripture';
+import { getChallengeGradientColors, capitalize } from '@/utils/styleUtils';
 
 export default function JoinChallengeScreen() {
   const colorScheme = useColorScheme();
   const { code: initialCode } = useLocalSearchParams<{ code?: string }>();
-  const { userProfile } = useAuth();
+  const { userProfile, setNickname } = useAuth();
   const { getChallengeByCode, joinChallenge, isLoading, error } = useChallenge();
 
   const [code, setCode] = useState(initialCode?.toUpperCase() || '');
   const [foundChallenge, setFoundChallenge] = useState<Challenge | null>(null);
   const [isJoining, setIsJoining] = useState(false);
+  const [showNicknameModal, setShowNicknameModal] = useState(false);
 
   const colors = Colors[colorScheme ?? 'light'];
 
   // Auto-search if code is provided via deep link
   useEffect(() => {
-    if (initialCode && initialCode.length === 6) {
-      handleSearch();
-    }
-  }, [initialCode]);
+    const autoSearch = async () => {
+      if (initialCode && initialCode.length === 6) {
+        const searchCode = initialCode.toUpperCase();
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+        const challenge = await getChallengeByCode(searchCode);
+        if (challenge) {
+          setFoundChallenge(challenge);
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        } else {
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+        }
+      }
+    };
+    autoSearch();
+  }, [initialCode, getChallengeByCode]);
 
   const handleCodeChange = (text: string) => {
     // Only allow alphanumeric, convert to uppercase
@@ -52,14 +67,15 @@ export default function JoinChallengeScreen() {
     }
   };
 
-  const handleSearch = async () => {
-    if (code.length !== 6) {
+  const handleSearch = async (codeToSearch?: string) => {
+    const searchCode = codeToSearch || code;
+    if (searchCode.length !== 6) {
       Alert.alert('Invalid Code', 'Please enter a 6-character challenge code.');
       return;
     }
 
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    const challenge = await getChallengeByCode(code);
+    const challenge = await getChallengeByCode(searchCode);
     if (challenge) {
       setFoundChallenge(challenge);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
@@ -68,15 +84,8 @@ export default function JoinChallengeScreen() {
     }
   };
 
-  const handleJoin = async () => {
-    if (!foundChallenge || !userProfile?.nickname) {
-      Alert.alert(
-        'Nickname Required',
-        'You need to set a nickname before joining challenges. Go to Settings to set one.',
-        [{ text: 'OK' }]
-      );
-      return;
-    }
+  const proceedWithJoin = async () => {
+    if (!foundChallenge) return;
 
     setIsJoining(true);
     const success = await joinChallenge(foundChallenge);
@@ -94,28 +103,33 @@ export default function JoinChallengeScreen() {
       });
     } else {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      Alert.alert(
+        'Unable to Join',
+        error || 'Failed to join challenge. Please try again.',
+        [{ text: 'OK' }]
+      );
     }
   };
 
-  const getGradientColors = (mode: GameMode): readonly [string, string] => {
-    if (colorScheme === 'dark') {
-      switch (mode) {
-        case 'easy':
-          return ['#1a5d7e', '#0a3d5e'] as const;
-        case 'medium':
-          return ['#1a6e7e', '#0a4e5e'] as const;
-        case 'hard':
-          return ['#1a7e7e', '#0a5e5e'] as const;
-      }
-    } else {
-      switch (mode) {
-        case 'easy':
-          return ['#0a7ea4', '#085d7a'] as const;
-        case 'medium':
-          return ['#0a8ea4', '#086d7a'] as const;
-        case 'hard':
-          return ['#0a9ea4', '#087d7a'] as const;
-      }
+  const handleJoin = async () => {
+    if (!foundChallenge) return;
+
+    if (!userProfile?.nickname) {
+      setShowNicknameModal(true);
+      return;
+    }
+
+    proceedWithJoin();
+  };
+
+  const handleNicknameSubmit = async (newNickname: string) => {
+    try {
+      await setNickname(newNickname);
+      setShowNicknameModal(false);
+      // Call proceedWithJoin directly - bypasses nickname check
+      proceedWithJoin();
+    } catch (err) {
+      Alert.alert('Error', 'Failed to save nickname. Please try again.');
     }
   };
 
@@ -149,13 +163,18 @@ export default function JoinChallengeScreen() {
           maxLength={6}
           keyboardType="default"
           textAlign="center"
+          accessibilityLabel="Challenge code input"
+          accessibilityHint="Enter the 6-character challenge code from your friend"
         />
       </View>
 
       <TouchableOpacity
         style={styles.buttonContainer}
-        onPress={handleSearch}
+        onPress={() => handleSearch()}
         disabled={code.length !== 6 || isLoading}
+        accessibilityRole="button"
+        accessibilityLabel="Search for challenge"
+        accessibilityState={{ disabled: code.length !== 6 || isLoading }}
       >
         <LinearGradient
           colors={
@@ -191,14 +210,15 @@ export default function JoinChallengeScreen() {
       <View style={[styles.challengeCard, { backgroundColor: colors.tint + '10' }]}>
         <View style={styles.challengerInfo}>
           {foundChallenge?.creatorPhotoURL ? (
-            <View style={[styles.avatar, { backgroundColor: colors.tint }]}>
-              <ThemedText style={styles.avatarText}>
-                {foundChallenge.creatorNickname.charAt(0).toUpperCase()}
-              </ThemedText>
-            </View>
+            <Image
+              source={{ uri: foundChallenge.creatorPhotoURL }}
+              style={styles.avatarImage}
+            />
           ) : (
             <View style={[styles.avatar, { backgroundColor: colors.tint }]}>
-              <Ionicons name="person" size={24} color="white" />
+              <ThemedText style={styles.avatarText}>
+                {foundChallenge?.creatorNickname.charAt(0).toUpperCase()}
+              </ThemedText>
             </View>
           )}
           <View style={styles.challengerText}>
@@ -215,8 +235,7 @@ export default function JoinChallengeScreen() {
           <View style={styles.detailRow}>
             <Ionicons name="speedometer-outline" size={20} color={colors.tint} />
             <ThemedText style={styles.detailText}>
-              {foundChallenge?.difficulty.charAt(0).toUpperCase()}
-              {foundChallenge?.difficulty.slice(1)} Difficulty
+              {foundChallenge?.difficulty && capitalize(foundChallenge.difficulty)} Difficulty
             </ThemedText>
           </View>
           <View style={styles.detailRow}>
@@ -242,7 +261,7 @@ export default function JoinChallengeScreen() {
         disabled={isJoining}
       >
         <LinearGradient
-          colors={getGradientColors(foundChallenge?.difficulty || 'easy')}
+          colors={getChallengeGradientColors(foundChallenge?.difficulty || 'easy', colorScheme)}
           style={styles.searchButton}
           start={{ x: 0, y: 0 }}
           end={{ x: 1, y: 0 }}
@@ -260,7 +279,10 @@ export default function JoinChallengeScreen() {
 
       <TouchableOpacity
         style={styles.backButton}
-        onPress={() => setFoundChallenge(null)}
+        onPress={() => {
+          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+          setFoundChallenge(null);
+        }}
       >
         <ThemedText style={[styles.backButtonText, { color: colors.tint }]}>
           Enter Different Code
@@ -293,6 +315,15 @@ export default function JoinChallengeScreen() {
           </ThemedView>
         </KeyboardAvoidingView>
       </SafeAreaView>
+
+      <NicknameModal
+        visible={showNicknameModal}
+        onClose={() => setShowNicknameModal(false)}
+        onSubmit={handleNicknameSubmit}
+        initialNickname=""
+        title="Set Nickname"
+        subtitle="Choose a nickname to join this challenge"
+      />
     </>
   );
 }
@@ -384,6 +415,12 @@ const styles = StyleSheet.create({
     borderRadius: 25,
     alignItems: 'center',
     justifyContent: 'center',
+    marginRight: 12,
+  },
+  avatarImage: {
+    width: 50,
+    height: 50,
+    borderRadius: 25,
     marginRight: 12,
   },
   avatarText: {

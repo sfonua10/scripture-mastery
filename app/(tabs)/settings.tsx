@@ -26,6 +26,7 @@ import { NicknameModal } from '@/components/NicknameModal';
 import { Colors } from '@/constants/Colors';
 import { useColorScheme } from '@/hooks/useColorScheme';
 import { useTutorial } from '@/hooks/useTutorial';
+import { useSound } from '@/hooks/useSound';
 import { useTheme, ThemePreference } from '@/contexts/ThemeContext';
 import { useAuth } from '@/contexts/AuthContext';
 
@@ -312,6 +313,7 @@ export default function SettingsScreen() {
   const colors = Colors[colorScheme ?? 'light'];
   const { showTutorial, dismissTutorial, openTutorial } = useTutorial();
   const { preference, setPreference, soundEnabled, setSoundEnabled } = useTheme();
+  const { playCorrect } = useSound();
   const {
     nickname,
     hasJoinedLeaderboard,
@@ -407,6 +409,9 @@ export default function SettingsScreen() {
   const handleSoundToggle = (value: boolean) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     setSoundEnabled(value);
+    if (value) {
+      playCorrect(true);
+    }
   };
 
   const handleOpenTutorial = () => {

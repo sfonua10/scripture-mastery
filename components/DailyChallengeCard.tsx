@@ -1,5 +1,5 @@
-import React, { useEffect, useRef } from 'react';
-import { Pressable, View, StyleSheet, AccessibilityInfo } from 'react-native';
+import React, { useEffect, useRef, useCallback } from 'react';
+import { Pressable, View, StyleSheet } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
@@ -7,13 +7,12 @@ import Animated, {
   useSharedValue,
   useAnimatedStyle,
   withSpring,
-  withRepeat,
   withSequence,
   withTiming,
-  withDelay,
   Easing,
   interpolate,
 } from 'react-native-reanimated';
+import { useFocusEffect } from 'expo-router';
 import { ThemedText } from '@/components/ThemedText';
 import { useDailyChallenge } from '@/hooks/useDailyChallenge';
 import { useColorScheme } from '@/hooks/useColorScheme';
@@ -24,7 +23,6 @@ interface DailyChallengeCardProps {
 
 // Animated components
 const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
-const AnimatedIonicons = Animated.createAnimatedComponent(Ionicons);
 
 // Spring config for natural feel
 const SPRING_CONFIG = {
@@ -64,57 +62,20 @@ function AnimatedNumber({ value, color }: { value: number; color: string }) {
 
 export function DailyChallengeCard({ onPress }: DailyChallengeCardProps) {
   const colorScheme = useColorScheme();
-  const { stats, todayCompleted, todayResult, isLoading } = useDailyChallenge();
+  const { stats, todayCompleted, isLoading, refreshStats } = useDailyChallenge();
   const previousStreakRef = useRef(stats.currentStreak);
 
-  // Animation values
+  // Refresh stats when screen comes into focus (fixes streak not updating on return)
+  useFocusEffect(
+    useCallback(() => {
+      refreshStats();
+    }, [refreshStats])
+  );
+
+  // Animation values - simplified (only press feedback)
   const scale = useSharedValue(1);
-  const translateY = useSharedValue(0);
-  const flameScale = useSharedValue(1);
-  const flameRotate = useSharedValue(0);
   const checkmarkScale = useSharedValue(todayCompleted ? 1 : 0);
   const checkmarkOpacity = useSharedValue(todayCompleted ? 1 : 0);
-  const entranceOpacity = useSharedValue(0);
-  const entranceTranslateY = useSharedValue(20);
-  const depthOffset = useSharedValue(0);
-
-  // Check for reduced motion
-  const [reduceMotion, setReduceMotion] = React.useState(false);
-  useEffect(() => {
-    AccessibilityInfo.isReduceMotionEnabled().then(setReduceMotion);
-  }, []);
-
-  // Entrance animation
-  useEffect(() => {
-    entranceOpacity.value = withDelay(100, withTiming(1, { duration: 400 }));
-    entranceTranslateY.value = withDelay(100, withSpring(0, { damping: 20, stiffness: 90 }));
-  }, []);
-
-  // Subtle flame pulse when streak > 0
-  useEffect(() => {
-    if (reduceMotion) return;
-
-    if (stats.currentStreak > 0 && !todayCompleted) {
-      flameScale.value = withRepeat(
-        withSequence(
-          withTiming(1.12, { duration: 900, easing: Easing.inOut(Easing.ease) }),
-          withTiming(1, { duration: 900, easing: Easing.inOut(Easing.ease) })
-        ),
-        -1,
-        true
-      );
-
-      // Subtle flame sway
-      flameRotate.value = withRepeat(
-        withSequence(
-          withTiming(5, { duration: 600, easing: Easing.inOut(Easing.ease) }),
-          withTiming(-5, { duration: 600, easing: Easing.inOut(Easing.ease) })
-        ),
-        -1,
-        true
-      );
-    }
-  }, [stats.currentStreak, todayCompleted, reduceMotion]);
 
   // Checkmark animation when completed
   useEffect(() => {
@@ -127,36 +88,8 @@ export function DailyChallengeCard({ onPress }: DailyChallengeCardProps) {
     }
   }, [todayCompleted]);
 
-  const entranceStyle = useAnimatedStyle(() => ({
-    opacity: entranceOpacity.value,
-    transform: [{ translateY: entranceTranslateY.value }],
-  }));
-
   const animatedContainerStyle = useAnimatedStyle(() => ({
-    transform: [
-      { scale: scale.value },
-      { translateY: translateY.value },
-    ],
-  }));
-
-  // Parallax depth effect on content
-  const contentDepthStyle = useAnimatedStyle(() => ({
-    transform: [
-      { translateY: depthOffset.value * 0.5 },
-    ],
-  }));
-
-  const badgeDepthStyle = useAnimatedStyle(() => ({
-    transform: [
-      { translateY: depthOffset.value * -0.3 },
-    ],
-  }));
-
-  const animatedFlameStyle = useAnimatedStyle(() => ({
-    transform: [
-      { scale: flameScale.value },
-      { rotate: `${flameRotate.value}deg` },
-    ],
+    transform: [{ scale: scale.value }],
   }));
 
   const checkmarkAnimatedStyle = useAnimatedStyle(() => ({
@@ -168,16 +101,11 @@ export function DailyChallengeCard({ onPress }: DailyChallengeCardProps) {
     if (!todayCompleted) {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
       scale.value = withSpring(0.97, SPRING_CONFIG);
-      // Subtle depth effect - card presses down
-      translateY.value = withSpring(2, SPRING_CONFIG);
-      depthOffset.value = withSpring(3, SPRING_CONFIG);
     }
   };
 
   const handlePressOut = () => {
     scale.value = withSpring(1, SPRING_CONFIG);
-    translateY.value = withSpring(0, SPRING_CONFIG);
-    depthOffset.value = withSpring(0, SPRING_CONFIG);
   };
 
   const getGradientColors = (): readonly [string, string, string] => {
@@ -208,21 +136,6 @@ export function DailyChallengeCard({ onPress }: DailyChallengeCardProps) {
     return colorScheme === 'dark' ? 'rgba(255,255,255,0.8)' : 'rgba(120,53,15,0.75)';
   };
 
-  // Badge colors - subtle, blends with card
-  const getBadgeColors = () => {
-    if (todayCompleted) {
-      return {
-        // Subtle badge that blends with the card
-        background: colorScheme === 'dark' ? 'rgba(232,212,190,0.15)' : 'rgba(120,53,15,0.10)',
-        text: colorScheme === 'dark' ? 'rgba(232,212,190,0.8)' : 'rgba(120,53,15,0.7)',
-      };
-    }
-    return {
-      background: 'rgba(0,0,0,0.12)',
-      text: 'white',
-    };
-  };
-
   const getStreakText = () => {
     if (stats.currentStreak === 0) {
       return 'Start your streak!';
@@ -237,141 +150,108 @@ export function DailyChallengeCard({ onPress }: DailyChallengeCardProps) {
     return 'New scripture available!';
   };
 
-  if (isLoading) {
+  // Only show nothing on initial load - keep showing existing data during refresh
+  if (isLoading && stats.currentStreak === 0 && stats.totalCompleted === 0) {
     return null;
   }
 
   const textColor = getTextColor();
   const subtitleColor = getSubtitleColor();
-  const badgeColors = getBadgeColors();
 
   return (
-    <Animated.View style={[styles.wrapper, entranceStyle]}>
-      <Animated.View style={[styles.container, animatedContainerStyle]}>
-        <AnimatedPressable
-          onPress={onPress}
-          onPressIn={handlePressIn}
-          onPressOut={handlePressOut}
-          disabled={todayCompleted}
-          accessibilityRole="button"
-          accessibilityLabel={`Daily Challenge. ${todayCompleted ? 'Completed' : 'New scripture available'}. ${stats.currentStreak} day streak.`}
-          accessibilityHint={todayCompleted ? 'Challenge completed for today' : 'Double tap to start the daily challenge'}
+    <Animated.View style={[styles.container, animatedContainerStyle]}>
+      <AnimatedPressable
+        onPress={onPress}
+        onPressIn={handlePressIn}
+        onPressOut={handlePressOut}
+        disabled={todayCompleted}
+        accessibilityRole="button"
+        accessibilityLabel={`Daily Challenge. ${todayCompleted ? 'Completed' : 'New scripture available'}. ${stats.currentStreak} day streak.`}
+        accessibilityHint={todayCompleted ? 'Challenge completed for today' : 'Double tap to start the daily challenge'}
+      >
+        <LinearGradient
+          colors={getGradientColors()}
+          style={styles.gradient}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
         >
-          <LinearGradient
-            colors={getGradientColors()}
-            style={styles.gradient}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 1 }}
-          >
-            {/* TODAY / DONE Badge with depth effect */}
-            <Animated.View style={[styles.badge, { backgroundColor: badgeColors.background }, badgeDepthStyle]}>
-              <ThemedText style={[styles.badgeText, { color: badgeColors.text }]}>
-                {todayCompleted ? 'DONE' : 'TODAY'}
-              </ThemedText>
-            </Animated.View>
-
-            <Animated.View style={[styles.content, contentDepthStyle]}>
-              {/* Left: Icon + Text */}
-              <View style={styles.leftSection}>
-                <View style={styles.iconRow}>
-                  <View style={styles.iconContainer}>
-                    {todayCompleted ? (
-                      <Animated.View style={checkmarkAnimatedStyle}>
-                        <Ionicons
-                          name="checkmark-circle"
-                          size={34}
-                          color={colorScheme === 'dark' ? '#4ade80' : '#22c55e'}
-                        />
-                      </Animated.View>
-                    ) : (
+          <View style={styles.content}>
+            {/* Left: Icon + Text */}
+            <View style={styles.leftSection}>
+              <View style={styles.iconRow}>
+                <View style={styles.iconContainer}>
+                  {todayCompleted ? (
+                    <Animated.View style={checkmarkAnimatedStyle}>
                       <Ionicons
-                        name="book-outline"
-                        size={28}
-                        color={textColor}
+                        name="checkmark-circle"
+                        size={34}
+                        color={colorScheme === 'dark' ? '#4ade80' : '#22c55e'}
                       />
-                    )}
-                  </View>
-                  <View style={styles.textContainer}>
-                    <ThemedText style={[styles.title, { color: textColor }]}>
-                      Daily Challenge
-                    </ThemedText>
-                    <ThemedText style={[styles.subtitle, { color: subtitleColor }]}>
-                      {getSubtitleText()}
-                    </ThemedText>
-                  </View>
+                    </Animated.View>
+                  ) : (
+                    <Ionicons
+                      name="book-outline"
+                      size={28}
+                      color={textColor}
+                    />
+                  )}
+                </View>
+                <View style={styles.textContainer}>
+                  <ThemedText style={[styles.title, { color: textColor }]}>
+                    Daily Challenge
+                  </ThemedText>
+                  <ThemedText style={[styles.subtitle, { color: subtitleColor }]}>
+                    {getSubtitleText()}
+                  </ThemedText>
                 </View>
               </View>
+            </View>
 
-              {/* Right: Streak */}
-              <View style={styles.streakSection}>
-                {stats.currentStreak > 0 ? (
-                  <>
-                    <Animated.View style={animatedFlameStyle}>
-                      <Ionicons name="flame" size={18} color="#ff6b35" />
-                    </Animated.View>
-                    <View style={styles.streakTextContainer}>
-                      <AnimatedNumber value={stats.currentStreak} color={textColor} />
-                      <ThemedText style={[styles.streakLabel, { color: textColor }]}>
-                        {getStreakText()}
-                      </ThemedText>
-                    </View>
-                  </>
-                ) : (
-                  <ThemedText style={[styles.streakTextSmall, { color: subtitleColor }]}>
-                    {getStreakText()}
-                  </ThemedText>
-                )}
-              </View>
-            </Animated.View>
-          </LinearGradient>
-        </AnimatedPressable>
-      </Animated.View>
+            {/* Right: Streak */}
+            <View style={styles.streakSection}>
+              {stats.currentStreak > 0 ? (
+                <>
+                  <Ionicons name="flame" size={18} color="#ff6b35" />
+                  <View style={styles.streakTextContainer}>
+                    <AnimatedNumber value={stats.currentStreak} color={textColor} />
+                    <ThemedText style={[styles.streakLabel, { color: textColor }]}>
+                      {getStreakText()}
+                    </ThemedText>
+                  </View>
+                </>
+              ) : (
+                <ThemedText style={[styles.streakTextSmall, { color: subtitleColor }]}>
+                  {getStreakText()}
+                </ThemedText>
+              )}
+            </View>
+          </View>
+        </LinearGradient>
+      </AnimatedPressable>
     </Animated.View>
   );
 }
 
 const styles = StyleSheet.create({
-  wrapper: {
-    width: '100%',
-    marginBottom: 28,
-  },
   container: {
     width: '100%',
-    borderRadius: 18,
+    marginBottom: 20,
+    borderRadius: 16,
     overflow: 'hidden',
-    // Enhanced shadow for better depth
-    elevation: 8,
+    // Subtle shadow
+    elevation: 6,
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.12,
-    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.10,
+    shadowRadius: 12,
   },
   gradient: {
-    padding: 20,
-    paddingTop: 16,
-  },
-  badge: {
-    position: 'absolute',
-    top: 12,
-    right: 14,
-    flexDirection: 'row',
-    alignItems: 'center',
-    // backgroundColor set inline based on state
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 14,
-  },
-  badgeText: {
-    // color set inline based on state
-    fontSize: 11,
-    fontWeight: '700',
-    letterSpacing: 0.6,
+    padding: 16,
   },
   content: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginTop: 10,
   },
   leftSection: {
     flex: 1,

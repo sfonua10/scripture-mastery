@@ -11,8 +11,7 @@ import {
   onSnapshot,
   Unsubscribe,
   Timestamp,
-  getDoc,
-  FieldValue,
+  runTransaction,
 } from 'firebase/firestore';
 import { db } from '@/config/firebase';
 import {
@@ -26,6 +25,7 @@ import {
   getScripturesForChallenge,
   generateChallengeCode,
 } from '@/utils/scriptureUtils';
+import { capitalize } from '@/utils/styleUtils';
 
 const CHALLENGE_EXPIRY_DAYS = 7;
 
@@ -293,7 +293,7 @@ export function useChallenge(challengeId?: string) {
   );
 
   /**
-   * Submit score for challenger
+   * Submit score for challenger (uses transaction to prevent race conditions)
    */
   const submitChallengerScore = useCallback(
     async (challengeIdToUpdate: string, score: number): Promise<boolean> => {
@@ -306,43 +306,33 @@ export function useChallenge(challengeId?: string) {
       setError(null);
 
       try {
-        // Get current challenge state to check if both scores are now complete
         const challengeRef = doc(db, 'challenges', challengeIdToUpdate);
-        const challengeSnap = await getDoc(challengeRef);
 
-        if (!challengeSnap.exists()) {
-          setError('Challenge not found');
-          setIsLoading(false);
-          return false;
-        }
+        // Use transaction to atomically read and update
+        await runTransaction(db, async (transaction) => {
+          const challengeSnap = await transaction.get(challengeRef);
 
-        const challengeData = challengeSnap.data();
+          if (!challengeSnap.exists()) {
+            throw new Error('Challenge not found');
+          }
 
-        // Update challenger score
-        const updateData: {
-          challengerScore: number;
-          challengerCompletedAt: FieldValue;
-          status?: 'completed';
-          completedAt?: FieldValue;
-        } = {
-          challengerScore: score,
-          challengerCompletedAt: serverTimestamp(),
-        };
+          const challengeData = challengeSnap.data();
 
-        // If creator has already completed, mark challenge as completed
-        // (Cloud Function will determine winner and send notifications)
-        if (challengeData.creatorScore !== undefined) {
-          updateData.status = 'completed';
-          updateData.completedAt = serverTimestamp();
-        }
+          // Build update data - only set the challenger's score
+          // The Cloud Function will handle setting status, winnerId, and isTie atomically
+          const updateData: Record<string, any> = {
+            challengerScore: score,
+            challengerCompletedAt: serverTimestamp(),
+          };
 
-        await updateDoc(challengeRef, updateData);
+          transaction.update(challengeRef, updateData);
+        });
 
         setIsLoading(false);
         return true;
-      } catch (err) {
+      } catch (err: any) {
         console.error('Submit challenger score error:', err);
-        setError('Failed to submit score');
+        setError(err.message === 'Challenge not found' ? err.message : 'Failed to submit score');
         setIsLoading(false);
         return false;
       }
@@ -362,9 +352,7 @@ export function useChallenge(challengeId?: string) {
    */
   const getChallengeShareText = useCallback(
     (challengeToShare: Challenge): string => {
-      const difficultyLabel =
-        challengeToShare.difficulty.charAt(0).toUpperCase() +
-        challengeToShare.difficulty.slice(1);
+      const difficultyLabel = capitalize(challengeToShare.difficulty);
 
       return `I challenge you to Scripture Mastery Pro!\n\n` +
         `Difficulty: ${difficultyLabel}\n` +

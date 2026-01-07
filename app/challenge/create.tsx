@@ -18,6 +18,7 @@ import { useColorScheme } from '@/hooks/useColorScheme';
 import { useChallenge } from '@/hooks/useChallenge';
 import { useAuth } from '@/contexts/AuthContext';
 import { GameMode, QuestionCount } from '@/types/scripture';
+import { getChallengeGradientColors, capitalize } from '@/utils/styleUtils';
 
 type Step = 'difficulty' | 'questions';
 
@@ -70,28 +71,6 @@ export default function CreateChallengeScreen() {
     }
   };
 
-  const getGradientColors = (mode: GameMode): readonly [string, string] => {
-    if (colorScheme === 'dark') {
-      switch (mode) {
-        case 'easy':
-          return ['#1a5d7e', '#0a3d5e'] as const;
-        case 'medium':
-          return ['#1a6e7e', '#0a4e5e'] as const;
-        case 'hard':
-          return ['#1a7e7e', '#0a5e5e'] as const;
-      }
-    } else {
-      switch (mode) {
-        case 'easy':
-          return ['#0a7ea4', '#085d7a'] as const;
-        case 'medium':
-          return ['#0a8ea4', '#086d7a'] as const;
-        case 'hard':
-          return ['#0a9ea4', '#087d7a'] as const;
-      }
-    }
-  };
-
   const renderDifficultyStep = () => (
     <>
       <ThemedText style={styles.stepTitle}>Select Difficulty</ThemedText>
@@ -99,29 +78,39 @@ export default function CreateChallengeScreen() {
         Choose the challenge difficulty for you and your friend
       </ThemedText>
 
-      {(['easy', 'medium', 'hard'] as GameMode[]).map((mode) => (
-        <TouchableOpacity
-          key={mode}
-          style={styles.buttonContainer}
-          onPress={() => handleDifficultySelect(mode)}
-        >
-          <LinearGradient
-            colors={getGradientColors(mode)}
-            style={styles.modeButton}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 0 }}
+      {(['easy', 'medium', 'hard'] as GameMode[]).map((mode) => {
+        const description =
+          mode === 'easy' ? 'Guess the book' :
+          mode === 'medium' ? 'Guess the book and chapter' :
+          'Guess the book, chapter, and verse';
+        return (
+          <TouchableOpacity
+            key={mode}
+            style={styles.buttonContainer}
+            onPress={() => handleDifficultySelect(mode)}
+            activeOpacity={0.7}
+            accessibilityRole="button"
+            accessibilityLabel={`${capitalize(mode)} difficulty: ${description}`}
           >
-            <ThemedText style={styles.modeButtonText}>
-              {mode.charAt(0).toUpperCase() + mode.slice(1)}
-            </ThemedText>
-            <ThemedText style={styles.modeDescription}>
-              {mode === 'easy' && 'Guess the book'}
-              {mode === 'medium' && 'Guess the book and chapter'}
-              {mode === 'hard' && 'Guess the book, chapter, and verse'}
-            </ThemedText>
-          </LinearGradient>
-        </TouchableOpacity>
-      ))}
+            <LinearGradient
+              colors={getChallengeGradientColors(mode, colorScheme)}
+              style={styles.modeButton}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 0 }}
+            >
+              <ThemedText style={styles.modeButtonText}>
+                {capitalize(mode)}
+              </ThemedText>
+              <ThemedText style={styles.modeDescription}>
+                {description}
+              </ThemedText>
+            </LinearGradient>
+          </TouchableOpacity>
+        );
+      })}
+
+      {/* Placeholder to match questions step height (prevents vertical shifting) */}
+      <View style={styles.backButtonPlaceholder} />
     </>
   );
 
@@ -132,38 +121,53 @@ export default function CreateChallengeScreen() {
         How many scriptures should the challenge include?
       </ThemedText>
 
-      {([3, 5, 10] as QuestionCount[]).map((count) => (
-        <TouchableOpacity
-          key={count}
-          style={styles.buttonContainer}
-          onPress={() => handleQuestionCountSelect(count)}
-          disabled={isLoading}
-        >
-          <LinearGradient
-            colors={getGradientColors(selectedDifficulty || 'easy')}
-            style={[styles.modeButton, isLoading && styles.disabledButton]}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 0 }}
+      {([3, 5, 10] as QuestionCount[]).map((count) => {
+        const description =
+          count === 3 ? 'Quick challenge' :
+          count === 5 ? 'Standard challenge' :
+          'Full challenge';
+        return (
+          <TouchableOpacity
+            key={count}
+            style={styles.buttonContainer}
+            onPress={() => handleQuestionCountSelect(count)}
+            disabled={isLoading}
+            activeOpacity={0.7}
+            accessibilityRole="button"
+            accessibilityLabel={`${count} questions: ${description}`}
+            accessibilityState={{ disabled: isLoading }}
           >
-            {isLoading && selectedQuestionCount === count ? (
-              <ActivityIndicator color="white" size="small" />
-            ) : (
-              <>
-                <ThemedText style={styles.modeButtonText}>{count} Questions</ThemedText>
-                <ThemedText style={styles.modeDescription}>
-                  {count === 3 && 'Quick challenge'}
-                  {count === 5 && 'Standard challenge'}
-                  {count === 10 && 'Full challenge'}
-                </ThemedText>
-              </>
-            )}
-          </LinearGradient>
-        </TouchableOpacity>
-      ))}
+            <LinearGradient
+              colors={getChallengeGradientColors(selectedDifficulty || 'easy', colorScheme)}
+              style={[styles.modeButton, isLoading && styles.disabledButton]}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 0 }}
+            >
+              {isLoading && selectedQuestionCount === count ? (
+                <View style={styles.loadingContainer}>
+                  <ActivityIndicator color="white" size="small" />
+                </View>
+              ) : (
+                <>
+                  <ThemedText style={styles.modeButtonText}>{count} Questions</ThemedText>
+                  <ThemedText style={styles.modeDescription}>
+                    {description}
+                  </ThemedText>
+                </>
+              )}
+            </LinearGradient>
+          </TouchableOpacity>
+        );
+      })}
 
       <TouchableOpacity
         style={styles.backButton}
-        onPress={() => setStep('difficulty')}
+        onPress={() => {
+          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+          setStep('difficulty');
+        }}
+        accessibilityRole="button"
+        accessibilityLabel="Go back to difficulty selection"
       >
         <ThemedText style={[styles.backButtonText, { color: colors.tint }]}>
           Back to difficulty
@@ -188,8 +192,10 @@ export default function CreateChallengeScreen() {
             </View>
           )}
 
-          {step === 'difficulty' && renderDifficultyStep()}
-          {step === 'questions' && renderQuestionsStep()}
+          <View style={styles.stepContentWrapper}>
+            {step === 'difficulty' && renderDifficultyStep()}
+            {step === 'questions' && renderQuestionsStep()}
+          </View>
         </ThemedView>
       </SafeAreaView>
     </>
@@ -203,8 +209,8 @@ const styles = StyleSheet.create({
   content: {
     flex: 1,
     padding: 20,
+    paddingTop: 60,
     alignItems: 'center',
-    justifyContent: 'center',
   },
   stepTitle: {
     fontSize: 28,
@@ -235,6 +241,8 @@ const styles = StyleSheet.create({
     width: '100%',
     padding: 20,
     alignItems: 'center',
+    minHeight: 80,
+    justifyContent: 'center',
   },
   modeButtonText: {
     color: 'white',
@@ -257,6 +265,20 @@ const styles = StyleSheet.create({
   backButtonText: {
     fontSize: 16,
     fontWeight: '600',
+  },
+  backButtonPlaceholder: {
+    marginTop: 16,
+    padding: 12,
+    height: 44,
+  },
+  loadingContainer: {
+    height: 44,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  stepContentWrapper: {
+    width: '100%',
+    alignItems: 'center',
   },
   errorBanner: {
     position: 'absolute',

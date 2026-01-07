@@ -72,8 +72,8 @@ export function useSound() {
     };
   }, []);
 
-  const playCorrect = useCallback(async () => {
-    if (!soundEnabled || !correctSoundRef.current) return;
+  const playCorrect = useCallback(async (force?: boolean) => {
+    if ((!soundEnabled && !force) || !correctSoundRef.current) return;
 
     try {
       await correctSoundRef.current.replayAsync();
