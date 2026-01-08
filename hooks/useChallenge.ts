@@ -19,6 +19,7 @@ import {
   GameMode,
   QuestionCount,
   ChallengeStatus,
+  Scripture,
 } from '@/types/scripture';
 import { useAuth } from '@/contexts/AuthContext';
 import {
@@ -173,6 +174,71 @@ export function useChallenge(challengeId?: string) {
         return newChallenge;
       } catch (err) {
         console.error('Create challenge error:', err);
+        setError('Failed to create challenge');
+        setIsLoading(false);
+        return null;
+      }
+    },
+    [user, userProfile]
+  );
+
+  /**
+   * Create a challenge with pre-generated scriptures and creator's score
+   * Used when challenge is created AFTER the creator plays (deferred creation flow)
+   */
+  const createChallengeWithScore = useCallback(
+    async (params: {
+      challengeCode: string;
+      difficulty: GameMode;
+      questionCount: QuestionCount;
+      scriptures: Scripture[];
+      creatorScore: number;
+    }): Promise<Challenge | null> => {
+      if (!user || !userProfile?.nickname) {
+        setError('You must have a nickname to create challenges');
+        return null;
+      }
+
+      setIsLoading(true);
+      setError(null);
+
+      try {
+        const { challengeCode, difficulty, questionCount, scriptures, creatorScore } = params;
+
+        // Calculate expiry date
+        const expiresAt = new Date();
+        expiresAt.setDate(expiresAt.getDate() + CHALLENGE_EXPIRY_DAYS);
+
+        const challengeData = {
+          challengeCode,
+          difficulty,
+          questionCount,
+          scriptures,
+          creatorId: user.uid,
+          creatorNickname: userProfile.nickname,
+          creatorPhotoURL: userProfile.photoURL || null,
+          creatorScore,
+          creatorCompletedAt: serverTimestamp(),
+          status: 'pending' as ChallengeStatus,
+          createdAt: serverTimestamp(),
+          expiresAt: Timestamp.fromDate(expiresAt),
+        };
+
+        const docRef = await addDoc(collection(db, 'challenges'), challengeData);
+
+        const newChallenge: Challenge = {
+          id: docRef.id,
+          ...challengeData,
+          createdAt: new Date(),
+          expiresAt,
+          creatorCompletedAt: new Date(),
+        };
+
+        setChallenge(newChallenge);
+        setIsLoading(false);
+        return newChallenge;
+      } catch (err) {
+        console.error('Create challenge with score error:', err);
         setError('Failed to create challenge');
         setIsLoading(false);
         return null;
@@ -368,6 +434,7 @@ export function useChallenge(challengeId?: string) {
     isLoading,
     error,
     createChallenge,
+    createChallengeWithScore,
     getChallengeByCode,
     joinChallenge,
     submitCreatorScore,

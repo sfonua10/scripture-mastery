@@ -3,8 +3,6 @@ import {
   StyleSheet,
   TouchableOpacity,
   View,
-  ActivityIndicator,
-  Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, Stack } from 'expo-router';
@@ -15,21 +13,17 @@ import { ThemedText } from '@/components/ThemedText';
 import { ThemedView } from '@/components/ThemedView';
 import { Colors } from '@/constants/Colors';
 import { useColorScheme } from '@/hooks/useColorScheme';
-import { useChallenge } from '@/hooks/useChallenge';
-import { useAuth } from '@/contexts/AuthContext';
 import { GameMode, QuestionCount } from '@/types/scripture';
 import { getChallengeGradientColors, capitalize } from '@/utils/styleUtils';
+import { getScripturesForChallenge, generateChallengeCode } from '@/utils/scriptureUtils';
 
 type Step = 'difficulty' | 'questions';
 
 export default function CreateChallengeScreen() {
   const colorScheme = useColorScheme();
-  const { userProfile } = useAuth();
-  const { createChallenge, isLoading, error } = useChallenge();
 
   const [step, setStep] = useState<Step>('difficulty');
   const [selectedDifficulty, setSelectedDifficulty] = useState<GameMode | null>(null);
-  const [selectedQuestionCount, setSelectedQuestionCount] = useState<QuestionCount | null>(null);
 
   const colors = Colors[colorScheme ?? 'light'];
 
@@ -39,36 +33,26 @@ export default function CreateChallengeScreen() {
     setStep('questions');
   };
 
-  const handleQuestionCountSelect = async (count: QuestionCount) => {
-    if (!selectedDifficulty || !userProfile?.nickname) {
-      Alert.alert(
-        'Nickname Required',
-        'You need to set a nickname before creating challenges. Go to Settings to set one.',
-        [{ text: 'OK' }]
-      );
-      return;
-    }
+  const handleQuestionCountSelect = (count: QuestionCount) => {
+    if (!selectedDifficulty) return;
 
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    setSelectedQuestionCount(count);
 
-    const challenge = await createChallenge(selectedDifficulty, count);
-    if (challenge) {
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      // Navigate directly to game - creator plays first
-      router.replace({
-        pathname: '/game',
-        params: {
-          mode: challenge.difficulty,
-          challengeId: challenge.id,
-          isCreator: 'true',
-        },
-      });
-    } else {
-      // Error state is set by useChallenge hook, provide haptic feedback
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-      setSelectedQuestionCount(null); // Reset selection to allow retry
-    }
+    // Generate scriptures locally - don't save to Firestore yet
+    const challengeCode = generateChallengeCode();
+    const scriptures = getScripturesForChallenge(challengeCode, count);
+
+    // Navigate to game with scriptures data (challenge created after playing)
+    router.replace({
+      pathname: '/game',
+      params: {
+        mode: selectedDifficulty,
+        challengeMode: 'creating',
+        challengeCode,
+        scriptures: JSON.stringify(scriptures),
+        questionCount: count.toString(),
+      },
+    });
   };
 
   const renderDifficultyStep = () => (
@@ -131,30 +115,20 @@ export default function CreateChallengeScreen() {
             key={count}
             style={styles.buttonContainer}
             onPress={() => handleQuestionCountSelect(count)}
-            disabled={isLoading}
             activeOpacity={0.7}
             accessibilityRole="button"
             accessibilityLabel={`${count} questions: ${description}`}
-            accessibilityState={{ disabled: isLoading }}
           >
             <LinearGradient
               colors={getChallengeGradientColors(selectedDifficulty || 'easy', colorScheme)}
-              style={[styles.modeButton, isLoading && styles.disabledButton]}
+              style={styles.modeButton}
               start={{ x: 0, y: 0 }}
               end={{ x: 1, y: 0 }}
             >
-              {isLoading && selectedQuestionCount === count ? (
-                <View style={styles.loadingContainer}>
-                  <ActivityIndicator color="white" size="small" />
-                </View>
-              ) : (
-                <>
-                  <ThemedText style={styles.modeButtonText}>{count} Questions</ThemedText>
-                  <ThemedText style={styles.modeDescription}>
-                    {description}
-                  </ThemedText>
-                </>
-              )}
+              <ThemedText style={styles.modeButtonText}>{count} Questions</ThemedText>
+              <ThemedText style={styles.modeDescription}>
+                {description}
+              </ThemedText>
             </LinearGradient>
           </TouchableOpacity>
         );
@@ -186,12 +160,6 @@ export default function CreateChallengeScreen() {
       />
       <SafeAreaView style={styles.container} edges={['bottom']}>
         <ThemedView style={styles.content}>
-          {error && (
-            <View style={[styles.errorBanner, { backgroundColor: '#ff4444' }]}>
-              <ThemedText style={styles.errorText}>{error}</ThemedText>
-            </View>
-          )}
-
           <View style={styles.stepContentWrapper}>
             {step === 'difficulty' && renderDifficultyStep()}
             {step === 'questions' && renderQuestionsStep()}
@@ -255,9 +223,6 @@ const styles = StyleSheet.create({
     fontSize: 14,
     opacity: 0.9,
   },
-  disabledButton: {
-    opacity: 0.7,
-  },
   backButton: {
     marginTop: 16,
     padding: 12,
@@ -271,26 +236,8 @@ const styles = StyleSheet.create({
     padding: 12,
     height: 44,
   },
-  loadingContainer: {
-    height: 44,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
   stepContentWrapper: {
     width: '100%',
     alignItems: 'center',
-  },
-  errorBanner: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    padding: 12,
-    zIndex: 1,
-  },
-  errorText: {
-    color: 'white',
-    textAlign: 'center',
-    fontWeight: '600',
   },
 });

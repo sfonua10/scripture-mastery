@@ -595,10 +595,22 @@ function AnimatedSummaryCard({ children, colors, visible }: AnimatedSummaryCardP
 }
 
 export default function GameScreen() {
-  const { mode, challengeId, isCreator } = useLocalSearchParams<{
+  const {
+    mode,
+    challengeId,
+    isCreator,
+    challengeMode,
+    challengeCode,
+    scriptures: scripturesParam,
+    questionCount: questionCountParam,
+  } = useLocalSearchParams<{
     mode: GameMode | 'daily';
     challengeId?: string;
     isCreator?: string;
+    challengeMode?: 'creating';
+    challengeCode?: string;
+    scriptures?: string;
+    questionCount?: string;
   }>();
   const colorScheme = useColorScheme();
   const colors = Colors[colorScheme ?? 'light'];
@@ -611,6 +623,19 @@ export default function GameScreen() {
   // Challenge mode
   const isChallengeMode = !!challengeId;
   const isChallenger = isCreator === 'false';
+
+  // Creating challenge mode (scriptures passed as params, not yet saved to Firestore)
+  const isCreatingChallenge = challengeMode === 'creating';
+  const creatingScriptures: Scripture[] = React.useMemo(() => {
+    if (isCreatingChallenge && scripturesParam) {
+      try {
+        return JSON.parse(scripturesParam);
+      } catch {
+        return [];
+      }
+    }
+    return [];
+  }, [isCreatingChallenge, scripturesParam]);
 
   // Daily challenge hook
   const {
@@ -639,9 +664,11 @@ export default function GameScreen() {
 
   // Challenge scriptures and question tracking
   const [challengeScriptureIndex, setChallengeScriptureIndex] = useState(0);
-  const totalQuestions = isChallengeMode && challenge
-    ? challenge.questionCount
-    : TOTAL_QUESTIONS;
+  const totalQuestions = isCreatingChallenge && questionCountParam
+    ? parseInt(questionCountParam, 10)
+    : isChallengeMode && challenge
+      ? challenge.questionCount
+      : TOTAL_QUESTIONS;
 
   const [currentScripture, setCurrentScripture] = useState<Scripture | null>(
     null
@@ -701,14 +728,18 @@ export default function GameScreen() {
     // Select scripture when the component mounts
     if (isDailyChallenge) {
       setCurrentScripture(dailyScripture);
+    } else if (isCreatingChallenge && creatingScriptures.length > 0) {
+      // Use locally-generated scriptures for challenge creation flow
+      setCurrentScripture(creatingScriptures[0]);
+      setChallengeScriptureIndex(0);
     } else if (isChallengeMode && challenge) {
       // Use pre-defined challenge scriptures
       setCurrentScripture(challenge.scriptures[0]);
       setChallengeScriptureIndex(0);
-    } else if (!isChallengeMode) {
+    } else if (!isChallengeMode && !isCreatingChallenge) {
       setCurrentScripture(getRandomScripture());
     }
-  }, [isDailyChallenge, dailyScripture, isChallengeMode, challenge]);
+  }, [isDailyChallenge, dailyScripture, isChallengeMode, challenge, isCreatingChallenge, creatingScriptures]);
 
   // Handle session completion - check for high score and show leaderboard prompt
   useEffect(() => {
@@ -719,6 +750,21 @@ export default function GameScreen() {
 
     const handleCompletion = async () => {
       try {
+        // Handle creating challenge mode - navigate directly to created-result screen
+        if (isCreatingChallenge && challengeCode) {
+          router.replace({
+            pathname: '/challenge/created-result',
+            params: {
+              challengeCode,
+              scriptures: scripturesParam,
+              difficulty: mode,
+              questionCount: totalQuestions.toString(),
+              score: correctCount.toString(),
+            },
+          });
+          return;
+        }
+
         // Handle challenge mode completion
         if (isChallengeMode && challengeId) {
           // Submit score to challenge
@@ -805,7 +851,7 @@ export default function GameScreen() {
       isMounted = false;
       timeoutIds.forEach(clearTimeout);
     };
-  }, [sessionComplete, correctCount, effectiveMode, isNewHighScore, updateHighScore, hasJoinedLeaderboard, isDailyChallenge, completeDailyChallenge, isChallengeMode, challengeId, isChallenger, submitCreatorScore, submitChallengerScore]);
+  }, [sessionComplete, correctCount, effectiveMode, isNewHighScore, updateHighScore, hasJoinedLeaderboard, isDailyChallenge, completeDailyChallenge, isChallengeMode, challengeId, isChallenger, submitCreatorScore, submitChallengerScore, isCreatingChallenge, challengeCode, scripturesParam, mode, totalQuestions]);
 
   // Trigger score animation when summary card appears
   useEffect(() => {
@@ -916,8 +962,13 @@ export default function GameScreen() {
       return;
     }
 
-    // Challenge mode - use pre-defined scriptures
-    if (isChallengeMode && challenge) {
+    // Creating challenge mode - use locally-generated scriptures
+    if (isCreatingChallenge && creatingScriptures.length > 0) {
+      const nextIndex = challengeScriptureIndex + 1;
+      setCurrentScripture(creatingScriptures[nextIndex]);
+      setChallengeScriptureIndex(nextIndex);
+    } else if (isChallengeMode && challenge) {
+      // Challenge mode - use pre-defined scriptures
       const nextIndex = challengeScriptureIndex + 1;
       setCurrentScripture(challenge.scriptures[nextIndex]);
       setChallengeScriptureIndex(nextIndex);
@@ -1156,6 +1207,12 @@ export default function GameScreen() {
       />
 
       {sessionComplete ? (
+        isCreatingChallenge ? (
+          // Simple transition for challenge creation - navigating to Challenge Ready screen
+          <ThemedView style={[styles.summaryContainer, styles.transitionContainer]}>
+            <ActivityIndicator size="large" color={colors.tint} />
+          </ThemedView>
+        ) : (
         <ThemedView style={styles.summaryContainer}>
           {/* Confetti for high scores OR streak milestones (7, 14, 30 days) */}
           {(correctCount >= 8 || (isDailyChallenge && [7, 14, 30].includes(dailyStats.currentStreak))) && (
@@ -1405,6 +1462,7 @@ export default function GameScreen() {
             onDismiss={handleDismissBadge}
           />
         </ThemedView>
+        )
       ) : (
       <KeyboardAvoidingView
         behavior={Platform.OS === "ios" ? "padding" : "height"}
@@ -1710,6 +1768,10 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
     padding: 20,
+  },
+  transitionContainer: {
+    justifyContent: "center",
+    alignItems: "center",
   },
   summaryCard: {
     width: "100%",

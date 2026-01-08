@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   StyleSheet,
   TouchableOpacity,
@@ -39,6 +39,25 @@ export default function JoinChallengeScreen() {
 
   const colors = Colors[colorScheme ?? 'light'];
 
+  // Memoized styles to prevent re-renders on every keystroke
+  const codeInputStyle = useMemo(() => ({
+    backgroundColor: colors.tint + '10',
+    color: colors.text,
+    borderColor: code.length === 6 ? colors.tint : 'transparent',
+  }), [colors.tint, colors.text, code.length]);
+
+  const placeholderColor = useMemo(() => colors.text + '40', [colors.text]);
+
+  const iconContainerStyle = useMemo(() => ({
+    backgroundColor: colors.tint + '20',
+  }), [colors.tint]);
+
+  const searchButtonGradient = useMemo(() =>
+    code.length === 6
+      ? [colors.tint, colors.tint + 'dd'] as const
+      : [colors.tint + '60', colors.tint + '40'] as const,
+  [colors.tint, code.length]);
+
   // Auto-search if code is provided via deep link
   useEffect(() => {
     const autoSearch = async () => {
@@ -57,15 +76,13 @@ export default function JoinChallengeScreen() {
     autoSearch();
   }, [initialCode, getChallengeByCode]);
 
-  const handleCodeChange = (text: string) => {
+  const handleCodeChange = useCallback((text: string) => {
     // Only allow alphanumeric, convert to uppercase
     const cleaned = text.replace(/[^A-Za-z0-9]/g, '').toUpperCase();
     setCode(cleaned.slice(0, 6));
     // Reset found challenge if code changes
-    if (foundChallenge) {
-      setFoundChallenge(null);
-    }
-  };
+    setFoundChallenge((prev) => prev ? null : prev);
+  }, []);
 
   const handleSearch = async (codeToSearch?: string) => {
     const searchCode = codeToSearch || code;
@@ -133,9 +150,17 @@ export default function JoinChallengeScreen() {
     }
   };
 
+  // Memoized handlers to prevent unnecessary re-renders
+  const handleSearchPress = useCallback(() => handleSearch(), []);
+
+  const handleBackPress = useCallback(() => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setFoundChallenge(null);
+  }, []);
+
   const renderCodeInput = () => (
     <>
-      <View style={[styles.iconContainer, { backgroundColor: colors.tint + '20' }]}>
+      <View style={[styles.iconContainer, iconContainerStyle]}>
         <Ionicons name="game-controller-outline" size={48} color={colors.tint} />
       </View>
 
@@ -146,18 +171,11 @@ export default function JoinChallengeScreen() {
 
       <View style={styles.inputContainer}>
         <TextInput
-          style={[
-            styles.codeInput,
-            {
-              backgroundColor: colors.tint + '10',
-              color: colors.text,
-              borderColor: code.length === 6 ? colors.tint : 'transparent',
-            },
-          ]}
+          style={[styles.codeInput, codeInputStyle]}
           value={code}
           onChangeText={handleCodeChange}
           placeholder="ABCDEF"
-          placeholderTextColor={colors.text + '40'}
+          placeholderTextColor={placeholderColor}
           autoCapitalize="characters"
           autoCorrect={false}
           maxLength={6}
@@ -170,18 +188,14 @@ export default function JoinChallengeScreen() {
 
       <TouchableOpacity
         style={styles.buttonContainer}
-        onPress={() => handleSearch()}
+        onPress={handleSearchPress}
         disabled={code.length !== 6 || isLoading}
         accessibilityRole="button"
         accessibilityLabel="Search for challenge"
         accessibilityState={{ disabled: code.length !== 6 || isLoading }}
       >
         <LinearGradient
-          colors={
-            code.length === 6
-              ? [colors.tint, colors.tint + 'dd']
-              : [colors.tint + '60', colors.tint + '40']
-          }
+          colors={searchButtonGradient}
           style={styles.searchButton}
           start={{ x: 0, y: 0 }}
           end={{ x: 1, y: 0 }}
@@ -279,10 +293,7 @@ export default function JoinChallengeScreen() {
 
       <TouchableOpacity
         style={styles.backButton}
-        onPress={() => {
-          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-          setFoundChallenge(null);
-        }}
+        onPress={handleBackPress}
       >
         <ThemedText style={[styles.backButtonText, { color: colors.tint }]}>
           Enter Different Code

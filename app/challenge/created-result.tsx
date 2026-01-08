@@ -28,18 +28,32 @@ import { Colors } from '@/constants/Colors';
 import { useColorScheme } from '@/hooks/useColorScheme';
 import { useChallenge } from '@/hooks/useChallenge';
 import { capitalize, getScoreColorByRatio } from '@/utils/styleUtils';
+import { Scripture, GameMode, QuestionCount } from '@/types/scripture';
 
 export default function CreatedResultScreen() {
   const colorScheme = useColorScheme();
-  const { challengeId, score, questionCount } = useLocalSearchParams<{
-    challengeId: string;
+  // Accept both saved challenge params (challengeId) and unsaved challenge params (scriptures, difficulty, challengeCode)
+  const { challengeId, score, questionCount, scriptures, difficulty, challengeCode } = useLocalSearchParams<{
+    challengeId?: string;
     score: string;
     questionCount: string;
+    // Unsaved challenge params (coming directly from game.tsx)
+    scriptures?: string;
+    difficulty?: string;
+    challengeCode?: string;
   }>();
-  const { challenge, isLoading, getChallengeDeepLink } = useChallenge(challengeId);
+  const { challenge, isLoading, getChallengeDeepLink, createChallengeWithScore } = useChallenge(challengeId);
+
+  // Determine if this is an unsaved challenge (coming from game.tsx directly)
+  const isUnsavedChallenge = !challengeId && !!challengeCode;
+
+  // Parse scriptures for unsaved challenges
+  const parsedScriptures: Scripture[] = scriptures ? JSON.parse(scriptures) : [];
 
   const [copied, setCopied] = useState(false);
   const [showConfetti, setShowConfetti] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [savedChallengeId, setSavedChallengeId] = useState<string | null>(null);
   const scaleAnim = useRef(new Animated.Value(0)).current;
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const copyTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -50,6 +64,10 @@ export default function CreatedResultScreen() {
   const scoreNum = parseInt(score || '0', 10);
   const totalNum = parseInt(questionCount || '10', 10);
   const isHighScore = scoreNum >= Math.ceil(totalNum * 0.8); // 80% or higher
+
+  // Get the challenge code to display (from saved challenge or params)
+  const displayChallengeCode = challenge?.challengeCode || challengeCode || '';
+  const displayDifficulty = challenge?.difficulty || difficulty || 'easy';
 
   // Animation effect with proper cleanup
   useEffect(() => {
@@ -100,7 +118,7 @@ export default function CreatedResultScreen() {
   };
 
   const handleCopyCode = useCallback(async () => {
-    if (!challenge) return;
+    if (!displayChallengeCode) return;
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
 
     // Clear any existing timeout
@@ -108,21 +126,56 @@ export default function CreatedResultScreen() {
       clearTimeout(copyTimeoutRef.current);
     }
 
-    await Clipboard.setStringAsync(challenge.challengeCode);
+    await Clipboard.setStringAsync(displayChallengeCode);
     setCopied(true);
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     copyTimeoutRef.current = setTimeout(() => setCopied(false), 2000);
-  }, [challenge]);
+  }, [displayChallengeCode]);
 
   const handleShare = useCallback(async () => {
-    if (!challenge) return;
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+
+    // If this is an unsaved challenge, save it first
+    if (isUnsavedChallenge && !savedChallengeId) {
+      setIsSubmitting(true);
+      try {
+        // Create challenge with score
+        const newChallenge = await createChallengeWithScore({
+          challengeCode: challengeCode!,
+          difficulty: difficulty as GameMode,
+          questionCount: totalNum as QuestionCount,
+          scriptures: parsedScriptures,
+          creatorScore: scoreNum,
+        });
+
+        if (newChallenge) {
+          setSavedChallengeId(newChallenge.id);
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        } else {
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+          Alert.alert('Error', 'Failed to save challenge. Please try again.');
+          setIsSubmitting(false);
+          return;
+        }
+      } catch (err) {
+        console.error('Failed to create challenge:', err);
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+        Alert.alert('Error', 'Failed to save challenge. Please try again.');
+        setIsSubmitting(false);
+        return;
+      }
+      setIsSubmitting(false);
+    }
+
+    // Use the saved challenge data or params for sharing
+    const shareCode = challenge?.challengeCode || challengeCode || '';
+    const shareDifficulty = challenge?.difficulty || difficulty || 'easy';
 
     const shareText =
       `I scored ${scoreNum}/${totalNum} on this Scripture Mastery challenge. Think you can beat me?\n\n` +
-      `Difficulty: ${capitalize(challenge.difficulty)}\n` +
-      `Use code: ${challenge.challengeCode}\n\n` +
-      `Or tap this link:\n${getChallengeDeepLink(challenge.challengeCode)}`;
+      `Difficulty: ${capitalize(shareDifficulty)}\n` +
+      `Use code: ${shareCode}\n\n` +
+      `Or tap this link:\n${getChallengeDeepLink(shareCode)}`;
 
     try {
       if (shareCardRef.current) {
@@ -174,7 +227,7 @@ export default function CreatedResultScreen() {
         );
       }
     }
-  }, [challenge, scoreNum, totalNum, getChallengeDeepLink]);
+  }, [challenge, scoreNum, totalNum, getChallengeDeepLink, isUnsavedChallenge, savedChallengeId, createChallengeWithScore, challengeCode, difficulty, parsedScriptures]);
 
   const handleCreateAnother = useCallback(() => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -186,10 +239,34 @@ export default function CreatedResultScreen() {
     router.replace('/(tabs)');
   }, []);
 
+  // Handle cancel with confirmation for unsaved challenges
+  const handleCancel = useCallback(() => {
+    if (isUnsavedChallenge && !savedChallengeId) {
+      Alert.alert(
+        'Discard Challenge?',
+        'Your challenge has not been shared yet. Are you sure you want to leave?',
+        [
+          { text: 'Stay', style: 'cancel' },
+          {
+            text: 'Discard',
+            style: 'destructive',
+            onPress: () => {
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+              router.replace('/(tabs)');
+            },
+          },
+        ]
+      );
+    } else {
+      handleHome();
+    }
+  }, [isUnsavedChallenge, savedChallengeId, handleHome]);
+
   // Use shared utility for consistent score colors
   const scoreColor = getScoreColorByRatio(scoreNum / totalNum).text;
 
-  if (isLoading || !challenge) {
+  // Show loading only for saved challenges that need to be fetched
+  if (!isUnsavedChallenge && (isLoading || !challenge)) {
     return (
       <>
         <Stack.Screen options={{ title: 'Challenge Ready', headerBackTitle: 'Back' }} />
@@ -213,7 +290,7 @@ export default function CreatedResultScreen() {
       />
       <SafeAreaView style={styles.container} edges={['bottom']}>
         {/* Hidden shareable card for capturing - Image-Dominant Design */}
-        {challenge && (
+        {(challenge || isUnsavedChallenge) && (
           <View style={styles.shareCardWrapper}>
             <View ref={shareCardRef} style={styles.shareCard} collapsable={false}>
               {/* IMAGE SECTION - 70% of card (420px) */}
@@ -254,14 +331,14 @@ export default function CreatedResultScreen() {
                 {/* Challenge code */}
                 <View style={styles.shareCodeContainer}>
                   <Text style={styles.shareCodeLabel}>CHALLENGE CODE</Text>
-                  <Text style={styles.shareCodeText}>{challenge.challengeCode}</Text>
+                  <Text style={styles.shareCodeText}>{displayChallengeCode}</Text>
                 </View>
 
                 {/* Metadata badges */}
                 <View style={styles.shareDetailsRow}>
                   <View style={styles.shareDetailBadge}>
                     <Text style={styles.shareDetailText}>
-                      {capitalize(challenge.difficulty)}
+                      {capitalize(displayDifficulty)}
                     </Text>
                   </View>
                   <Text style={styles.shareDetailDot}>•</Text>
@@ -334,7 +411,7 @@ export default function CreatedResultScreen() {
               onPress={handleCopyCode}
               activeOpacity={0.8}
               accessibilityRole="button"
-              accessibilityLabel={`Copy challenge code ${challenge.challengeCode}`}
+              accessibilityLabel={`Copy challenge code ${displayChallengeCode}`}
             >
               {/* Copy icon - positioned top right */}
               <View style={styles.copyIconContainer}>
@@ -347,12 +424,12 @@ export default function CreatedResultScreen() {
 
               <ThemedText style={styles.codeLabel}>Challenge Code</ThemedText>
               <ThemedText style={[styles.codeText, { color: colors.tint }]}>
-                {challenge.challengeCode}
+                {displayChallengeCode}
               </ThemedText>
 
               {/* Integrated difficulty + question count */}
               <ThemedText style={styles.codeMetadata}>
-                {capitalize(challenge.difficulty)} · {totalNum} Questions
+                {capitalize(displayDifficulty)} · {totalNum} Questions
               </ThemedText>
 
               {/* Copy hint */}
@@ -364,21 +441,32 @@ export default function CreatedResultScreen() {
 
           {/* Action buttons */}
           <View style={styles.actions}>
-            <TouchableOpacity style={styles.buttonContainer} onPress={handleShare}>
+            <TouchableOpacity
+              style={[styles.buttonContainer, isSubmitting && styles.buttonDisabled]}
+              onPress={handleShare}
+              disabled={isSubmitting}
+            >
               <LinearGradient
                 colors={[colors.tint, colors.tint + 'dd']}
                 style={styles.actionButton}
                 start={{ x: 0, y: 0 }}
                 end={{ x: 1, y: 0 }}
               >
-                <Ionicons name="share-outline" size={24} color="white" />
-                <ThemedText style={styles.actionButtonText}>Share Challenge</ThemedText>
+                {isSubmitting ? (
+                  <ThemedText style={styles.actionButtonText}>Saving...</ThemedText>
+                ) : (
+                  <>
+                    <Ionicons name="share-outline" size={24} color="white" />
+                    <ThemedText style={styles.actionButtonText}>Share Challenge</ThemedText>
+                  </>
+                )}
               </LinearGradient>
             </TouchableOpacity>
 
             <TouchableOpacity
               style={[styles.secondaryButton, { borderColor: '#4CAF50' }]}
               onPress={handleCreateAnother}
+              disabled={isSubmitting}
             >
               <Ionicons name="add-circle-outline" size={24} color="#4CAF50" />
               <ThemedText style={[styles.secondaryButtonText, { color: '#4CAF50' }]}>
@@ -386,9 +474,9 @@ export default function CreatedResultScreen() {
               </ThemedText>
             </TouchableOpacity>
 
-            <TouchableOpacity style={styles.homeButton} onPress={handleHome}>
+            <TouchableOpacity style={styles.homeButton} onPress={handleCancel} disabled={isSubmitting}>
               <ThemedText style={[styles.homeButtonText, { color: colors.tint }]}>
-                Back to Home
+                {isUnsavedChallenge && !savedChallengeId ? 'Cancel' : 'Back to Home'}
               </ThemedText>
             </TouchableOpacity>
           </View>
@@ -415,6 +503,9 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  buttonDisabled: {
+    opacity: 0.5,
   },
   resultContainer: {
     alignItems: 'center',
