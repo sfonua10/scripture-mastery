@@ -1,7 +1,6 @@
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import {
   StyleSheet,
-  TouchableOpacity,
   View,
   Share,
   Animated,
@@ -11,11 +10,12 @@ import {
   InteractionManager,
   Alert,
   Platform,
+  TouchableOpacity,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, Stack, useLocalSearchParams } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
-import { Ionicons } from '@expo/vector-icons';
+import { Ionicons, Feather } from '@expo/vector-icons';
 import * as Clipboard from 'expo-clipboard';
 import * as Haptics from 'expo-haptics';
 import * as Sharing from 'expo-sharing';
@@ -23,6 +23,10 @@ import { captureRef } from 'react-native-view-shot';
 import ConfettiCannon from 'react-native-confetti-cannon';
 
 import { ThemedText } from '@/components/ThemedText';
+import { GradientButton } from '@/components/GradientButton';
+
+// Module-level constants to prevent re-render issues
+const CONFETTI_ORIGIN = { x: -10, y: 0 };
 import { ThemedView } from '@/components/ThemedView';
 import { Colors } from '@/constants/Colors';
 import { useColorScheme } from '@/hooks/useColorScheme';
@@ -47,11 +51,14 @@ export default function CreatedResultScreen() {
   // Determine if this is an unsaved challenge (coming from game.tsx directly)
   const isUnsavedChallenge = !challengeId && !!challengeCode;
 
-  // Parse scriptures for unsaved challenges
-  const parsedScriptures: Scripture[] = scriptures ? JSON.parse(scriptures) : [];
+  // Parse scriptures for unsaved challenges (memoized to prevent re-parsing on every render)
+  const parsedScriptures = useMemo<Scripture[]>(
+    () => (scriptures ? JSON.parse(scriptures) : []),
+    [scriptures]
+  );
 
+  // Use ref + animated value for copy feedback to avoid state-based re-renders
   const [copied, setCopied] = useState(false);
-  const [showConfetti, setShowConfetti] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [savedChallengeId, setSavedChallengeId] = useState<string | null>(null);
   const scaleAnim = useRef(new Animated.Value(0)).current;
@@ -59,17 +66,43 @@ export default function CreatedResultScreen() {
   const copyTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const shareCardRef = useRef<View>(null);
 
-  const colors = Colors[colorScheme ?? 'light'];
+  // Refs for stable callback dependencies (avoids handleShare recreation)
+  const challengeDataRef = useRef({ scoreNum: 0, totalNum: 0, challengeCode: '', difficulty: '' });
+  const parsedScripturesRef = useRef<Scripture[]>([]);
+
+  // Memoize colors to prevent object recreation on every render
+  const colors = useMemo(() => Colors[colorScheme ?? 'light'], [colorScheme]);
 
   const scoreNum = parseInt(score || '0', 10);
   const totalNum = parseInt(questionCount || '10', 10);
   const isHighScore = scoreNum >= Math.ceil(totalNum * 0.8); // 80% or higher
 
-  // Get the challenge code to display (from saved challenge or params)
-  const displayChallengeCode = challenge?.challengeCode || challengeCode || '';
-  const displayDifficulty = challenge?.difficulty || difficulty || 'easy';
+  // Use shared utility for consistent score colors
+  const scoreColor = getScoreColorByRatio(scoreNum / totalNum).text;
 
-  // Animation effect with proper cleanup
+  // Get the challenge code to display (from saved challenge or params)
+  // Memoized to prevent unnecessary recalculations
+  const displayChallengeCode = useMemo(
+    () => challenge?.challengeCode || challengeCode || '',
+    [challenge?.challengeCode, challengeCode]
+  );
+  const displayDifficulty = useMemo(
+    () => challenge?.difficulty || difficulty || 'easy',
+    [challenge?.difficulty, difficulty]
+  );
+
+  // Sync refs with current values for stable callback dependencies
+  useEffect(() => {
+    challengeDataRef.current = {
+      scoreNum,
+      totalNum,
+      challengeCode: challengeCode || '',
+      difficulty: difficulty || 'easy',
+    };
+    parsedScripturesRef.current = parsedScriptures;
+  }, [scoreNum, totalNum, challengeCode, difficulty, parsedScriptures]);
+
+  // Animation effect - runs only on mount to avoid re-triggering
   useEffect(() => {
     const animation = Animated.parallel([
       Animated.spring(scaleAnim, {
@@ -87,15 +120,16 @@ export default function CreatedResultScreen() {
 
     animation.start();
 
+    // Haptic feedback for high scores on mount only
     if (isHighScore) {
-      setShowConfetti(true);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     }
 
     return () => {
       animation.stop();
     };
-  }, [isHighScore]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // Empty deps - only run on mount
 
   // Cleanup copy timeout on unmount
   useEffect(() => {
@@ -129,11 +163,15 @@ export default function CreatedResultScreen() {
     await Clipboard.setStringAsync(displayChallengeCode);
     setCopied(true);
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    copyTimeoutRef.current = setTimeout(() => setCopied(false), 2000);
+    copyTimeoutRef.current = setTimeout(() => setCopied(false), 1500);
   }, [displayChallengeCode]);
 
   const handleShare = useCallback(async () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+
+    // Read current values from refs to avoid stale closures
+    const { scoreNum: currentScore, totalNum: currentTotal, challengeCode: currentCode, difficulty: currentDifficulty } = challengeDataRef.current;
+    const currentScriptures = parsedScripturesRef.current;
 
     // If this is an unsaved challenge, save it first
     if (isUnsavedChallenge && !savedChallengeId) {
@@ -141,11 +179,11 @@ export default function CreatedResultScreen() {
       try {
         // Create challenge with score
         const newChallenge = await createChallengeWithScore({
-          challengeCode: challengeCode!,
-          difficulty: difficulty as GameMode,
-          questionCount: totalNum as QuestionCount,
-          scriptures: parsedScriptures,
-          creatorScore: scoreNum,
+          challengeCode: currentCode,
+          difficulty: currentDifficulty as GameMode,
+          questionCount: currentTotal as QuestionCount,
+          scriptures: currentScriptures,
+          creatorScore: currentScore,
         });
 
         if (newChallenge) {
@@ -168,11 +206,11 @@ export default function CreatedResultScreen() {
     }
 
     // Use the saved challenge data or params for sharing
-    const shareCode = challenge?.challengeCode || challengeCode || '';
-    const shareDifficulty = challenge?.difficulty || difficulty || 'easy';
+    const shareCode = challenge?.challengeCode || currentCode;
+    const shareDifficulty = challenge?.difficulty || currentDifficulty;
 
     const shareText =
-      `I scored ${scoreNum}/${totalNum} on this Scripture Mastery challenge. Think you can beat me?\n\n` +
+      `I scored ${currentScore}/${currentTotal} on this Scripture Mastery challenge. Think you can beat me?\n\n` +
       `Difficulty: ${capitalize(shareDifficulty)}\n` +
       `Use code: ${shareCode}\n\n` +
       `Or tap this link:\n${getChallengeDeepLink(shareCode)}`;
@@ -207,17 +245,28 @@ export default function CreatedResultScreen() {
         // Fallback to text share
         await Share.share({ message: shareText });
       }
+      // Navigate to home after successful share
+      router.replace('/(tabs)');
     } catch (err) {
-      // User cancellation is normal - not an error
-      if (isUserCancellation(err)) return;
+      // User cancellation is normal - still navigate home (they saw the code)
+      if (isUserCancellation(err)) {
+        router.replace('/(tabs)');
+        return;
+      }
 
       console.error('Share image capture failed:', err);
 
       // Fallback to text share if image capture fails
       try {
         await Share.share({ message: shareText });
+        // Navigate to home after successful fallback share
+        router.replace('/(tabs)');
       } catch (fallbackErr) {
-        if (isUserCancellation(fallbackErr)) return;
+        // User cancellation - still navigate home (they saw the code)
+        if (isUserCancellation(fallbackErr)) {
+          router.replace('/(tabs)');
+          return;
+        }
 
         console.error('Share fallback failed:', fallbackErr);
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
@@ -227,17 +276,7 @@ export default function CreatedResultScreen() {
         );
       }
     }
-  }, [challenge, scoreNum, totalNum, getChallengeDeepLink, isUnsavedChallenge, savedChallengeId, createChallengeWithScore, challengeCode, difficulty, parsedScriptures]);
-
-  const handleCreateAnother = useCallback(() => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    router.replace('/challenge/create');
-  }, []);
-
-  const handleHome = useCallback(() => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    router.replace('/(tabs)');
-  }, []);
+  }, [challenge, getChallengeDeepLink, isUnsavedChallenge, savedChallengeId, createChallengeWithScore]);
 
   // Handle cancel with confirmation for unsaved challenges
   const handleCancel = useCallback(() => {
@@ -258,12 +297,10 @@ export default function CreatedResultScreen() {
         ]
       );
     } else {
-      handleHome();
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      router.replace('/(tabs)');
     }
-  }, [isUnsavedChallenge, savedChallengeId, handleHome]);
-
-  // Use shared utility for consistent score colors
-  const scoreColor = getScoreColorByRatio(scoreNum / totalNum).text;
+  }, [isUnsavedChallenge, savedChallengeId]);
 
   // Show loading only for saved challenges that need to be fetched
   if (!isUnsavedChallenge && (isLoading || !challenge)) {
@@ -285,7 +322,15 @@ export default function CreatedResultScreen() {
         options={{
           title: 'Challenge Ready',
           headerBackTitle: 'Back',
-          headerLeft: () => null, // Prevent back navigation
+          headerLeft: () => (
+            <TouchableOpacity
+              onPress={handleCancel}
+              style={{ paddingHorizontal: 8 }}
+              accessibilityLabel="Go back"
+            >
+              <Ionicons name="chevron-back" size={28} color={colors.tint} />
+            </TouchableOpacity>
+          ),
         }}
       />
       <SafeAreaView style={styles.container} edges={['bottom']}>
@@ -296,7 +341,7 @@ export default function CreatedResultScreen() {
               {/* IMAGE SECTION - 70% of card (420px) */}
               <View style={styles.shareImageSection}>
                 <Image
-                  source={require('@/assets/images/scriptorian.jpeg')}
+                  source={require('@/assets/images/share-background.png')}
                   style={styles.shareCardBanner}
                 />
                 {/* Gradient overlay for text legibility */}
@@ -305,16 +350,6 @@ export default function CreatedResultScreen() {
                   locations={[0, 0.5, 1]}
                   style={styles.shareImageOverlay}
                 />
-
-                {/* "BEAT MY SCORE" pill - top left */}
-                <View style={styles.shareBeatScorePill}>
-                  <Text style={styles.shareBeatScoreText}>BEAT MY SCORE!</Text>
-                </View>
-
-                {/* Trophy badge - top right with glow */}
-                <View style={styles.shareTrophyBadge}>
-                  <Ionicons name="trophy" size={28} color="#fff" />
-                </View>
 
                 {/* Floating glassmorphism score badge - overlaps into content */}
                 <View style={styles.shareFloatingScore}>
@@ -361,10 +396,10 @@ export default function CreatedResultScreen() {
         )}
 
         <ThemedView style={styles.content}>
-          {showConfetti && (
+          {isHighScore && (
             <ConfettiCannon
               count={200}
-              origin={{ x: -10, y: 0 }}
+              origin={CONFETTI_ORIGIN}
               autoStart={true}
               fadeOut={true}
             />
@@ -375,111 +410,56 @@ export default function CreatedResultScreen() {
             showsVerticalScrollIndicator={false}
           >
             <Animated.View
-            style={[
-              styles.resultContainer,
-              {
-                transform: [{ scale: scaleAnim }],
-                opacity: fadeAnim,
-              },
-            ]}
-          >
-            {/* Success icon */}
-            <View
               style={[
-                styles.resultIcon,
-                { backgroundColor: colors.tint + '20' },
+                styles.resultContainer,
+                {
+                  transform: [{ scale: scaleAnim }],
+                  opacity: fadeAnim,
+                },
               ]}
             >
-              <Ionicons name="trophy" size={64} color={colors.tint} />
-            </View>
+              {/* "You scored" label */}
+              <ThemedText style={styles.scoreLabel}>You scored</ThemedText>
 
-            <ThemedText style={styles.titleText}>Challenge Ready!</ThemedText>
-            <ThemedText style={styles.subtitleText}>
-              Share the code so your friend can try to beat your score
-            </ThemedText>
+              {/* Hero score - clean, no container */}
+              <View style={styles.heroScore}>
+                <ThemedText style={[styles.scoreNumber, { color: scoreColor }]}>{scoreNum}</ThemedText>
+                <ThemedText style={styles.scoreDivider}>/</ThemedText>
+                <ThemedText style={styles.scoreTotalNumber}>{totalNum}</ThemedText>
+              </View>
 
-            {/* Compact score badge */}
-            <View style={[styles.scoreBadge, { backgroundColor: scoreColor + '20' }]}>
-              <ThemedText style={[styles.scoreBadgeText, { color: scoreColor }]}>
-                Score: {scoreNum}/{totalNum}
-              </ThemedText>
-            </View>
-
-            {/* Tappable code card with integrated copy */}
-            <TouchableOpacity
-              style={[styles.codeCard, { backgroundColor: colors.tint + '10' }]}
-              onPress={handleCopyCode}
-              activeOpacity={0.8}
-              accessibilityRole="button"
-              accessibilityLabel={`Copy challenge code ${displayChallengeCode}`}
-            >
-              {/* Copy icon - positioned top right */}
-              <View style={styles.copyIconContainer}>
-                <Ionicons
-                  name={copied ? 'checkmark-circle' : 'copy-outline'}
-                  size={22}
-                  color={copied ? '#4CAF50' : colors.tint}
+              {/* Share button - primary action */}
+              <View style={styles.actions}>
+                <GradientButton
+                  onPress={handleShare}
+                  label="Share Challenge"
+                  loading={isSubmitting}
+                  disabled={isSubmitting}
+                  variant="primary"
+                  size="large"
+                  icon={<Ionicons name="share-outline" size={24} color="white" />}
                 />
               </View>
 
-              <ThemedText style={styles.codeLabel}>Challenge Code</ThemedText>
-              <ThemedText style={[styles.codeText, { color: colors.tint }]}>
-                {displayChallengeCode}
-              </ThemedText>
+              {/* Minimal code row with copy icon */}
+              <TouchableOpacity
+                style={styles.codeRow}
+                onPress={handleCopyCode}
+                accessibilityLabel={`Copy challenge code ${displayChallengeCode}`}
+              >
+                <ThemedText style={styles.inlineCode}>{displayChallengeCode}</ThemedText>
+                <Feather
+                  name={copied ? 'check' : 'copy'}
+                  size={16}
+                  color={copied ? colors.tint : colors.icon}
+                />
+              </TouchableOpacity>
 
-              {/* Integrated difficulty + question count */}
-              <ThemedText style={styles.codeMetadata}>
+              {/* Metadata */}
+              <ThemedText style={styles.metadata}>
                 {capitalize(displayDifficulty)} · {totalNum} Questions
               </ThemedText>
-
-              {/* Copy hint */}
-              <ThemedText style={styles.copyHintText}>
-                {copied ? 'Copied!' : 'Tap to copy'}
-              </ThemedText>
-            </TouchableOpacity>
-          </Animated.View>
-
-          {/* Action buttons */}
-          <View style={styles.actions}>
-            <TouchableOpacity
-              style={[styles.buttonContainer, isSubmitting && styles.buttonDisabled]}
-              onPress={handleShare}
-              disabled={isSubmitting}
-            >
-              <LinearGradient
-                colors={[colors.tint, colors.tint + 'dd']}
-                style={styles.actionButton}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 0 }}
-              >
-                {isSubmitting ? (
-                  <ThemedText style={styles.actionButtonText}>Saving...</ThemedText>
-                ) : (
-                  <>
-                    <Ionicons name="share-outline" size={24} color="white" />
-                    <ThemedText style={styles.actionButtonText}>Share Challenge</ThemedText>
-                  </>
-                )}
-              </LinearGradient>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={[styles.secondaryButton, { borderColor: '#4CAF50' }]}
-              onPress={handleCreateAnother}
-              disabled={isSubmitting}
-            >
-              <Ionicons name="add-circle-outline" size={24} color="#4CAF50" />
-              <ThemedText style={[styles.secondaryButtonText, { color: '#4CAF50' }]}>
-                Create Another
-              </ThemedText>
-            </TouchableOpacity>
-
-            <TouchableOpacity style={styles.homeButton} onPress={handleCancel} disabled={isSubmitting}>
-              <ThemedText style={[styles.homeButtonText, { color: colors.tint }]}>
-                {isUnsavedChallenge && !savedChallengeId ? 'Cancel' : 'Back to Home'}
-              </ThemedText>
-            </TouchableOpacity>
-          </View>
+            </Animated.View>
           </ScrollView>
         </ThemedView>
       </SafeAreaView>
@@ -504,126 +484,64 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  buttonDisabled: {
-    opacity: 0.5,
-  },
   resultContainer: {
     alignItems: 'center',
-    marginBottom: 32,
   },
-  resultIcon: {
-    width: 120,
-    height: 120,
-    borderRadius: 60,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 16,
-  },
-  titleText: {
-    fontSize: 32,
-    fontWeight: 'bold',
-    marginBottom: 8,
-    textAlign: 'center',
-    paddingTop: 8,
-  },
-  subtitleText: {
-    fontSize: 16,
-    opacity: 0.7,
-    marginBottom: 24,
-    textAlign: 'center',
-    paddingHorizontal: 20,
-  },
-  scoreBadge: {
-    paddingVertical: 10,
-    paddingHorizontal: 20,
-    borderRadius: 24,
-    marginBottom: 20,
-  },
-  scoreBadgeText: {
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  codeCard: {
-    width: '100%',
-    paddingTop: 20,
-    paddingBottom: 16,
-    paddingHorizontal: 24,
-    borderRadius: 16,
-    alignItems: 'center',
-    position: 'relative',
-  },
-  copyIconContainer: {
-    position: 'absolute',
-    top: 16,
-    right: 16,
-  },
-  codeLabel: {
-    fontSize: 12,
-    opacity: 0.6,
-    marginBottom: 8,
-    textTransform: 'uppercase',
-    letterSpacing: 1,
-  },
-  codeText: {
-    paddingTop: 12,
-    fontSize: 36,
-    fontWeight: 'bold',
-    letterSpacing: 8,
-  },
-  codeMetadata: {
-    marginTop: 16,
+  scoreLabel: {
     fontSize: 14,
+    fontWeight: '300',
     opacity: 0.6,
+    marginBottom: 8,
   },
-  copyHintText: {
-    marginTop: 12,
-    fontSize: 12,
+  heroScore: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    justifyContent: 'center',
+    marginBottom: 40,
+  },
+  scoreNumber: {
+    lineHeight: 80,
+    fontSize: 72,
+    fontWeight: '800',
+    letterSpacing: -2,
+  },
+  scoreDivider: {
+    lineHeight: 56,
+    fontSize: 48,
+    fontWeight: '200',
+    opacity: 0.3,
+    marginHorizontal: 4,
+  },
+  scoreTotalNumber: {
+    lineHeight: 56,
+    fontSize: 48,
+    fontWeight: '400',
     opacity: 0.5,
   },
   actions: {
+    width: '100%',
     gap: 12,
   },
-  buttonContainer: {
-    borderRadius: 12,
-    overflow: 'hidden',
-    elevation: 3,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-  },
-  actionButton: {
+  codeRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 12,
-    padding: 18,
+    gap: 8,
+    marginTop: 32,
+    paddingVertical: 8,
   },
-  actionButtonText: {
-    color: 'white',
-    fontSize: 18,
-    fontWeight: 'bold',
-  },
-  secondaryButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 12,
-    padding: 16,
-    borderRadius: 12,
-    borderWidth: 2,
-  },
-  secondaryButtonText: {
-    fontSize: 18,
-    fontWeight: '600',
-  },
-  homeButton: {
-    alignItems: 'center',
-    padding: 16,
-  },
-  homeButtonText: {
+  inlineCode: {
     fontSize: 16,
-    fontWeight: '600',
+    fontWeight: '500',
+    letterSpacing: 2,
+    opacity: 0.7,
+  },
+  metadata: {
+    fontSize: 12,
+    fontWeight: '300',
+    opacity: 0.4,
+    marginTop: 8,
+    textAlign: 'center',
   },
   // Share card styles - Image-Dominant "Scripture IS the Star" Design
   shareCardWrapper: {
@@ -653,41 +571,6 @@ const styles = StyleSheet.create({
   },
   shareImageOverlay: {
     ...StyleSheet.absoluteFillObject,
-  },
-  // "BEAT MY SCORE" pill - top left on image
-  shareBeatScorePill: {
-    position: 'absolute',
-    top: 20,
-    left: 20,
-    backgroundColor: 'rgba(0, 0, 0, 0.6)',
-    paddingVertical: 8,
-    paddingHorizontal: 16,
-    borderRadius: 20,
-  },
-  shareBeatScoreText: {
-    color: '#ffffff',
-    fontSize: 14,
-    fontWeight: '700',
-    letterSpacing: 1,
-  },
-  // Trophy badge - top right on image
-  shareTrophyBadge: {
-    position: 'absolute',
-    top: 20,
-    right: 20,
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: '#F59E0B',
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 3,
-    borderColor: 'rgba(255, 255, 255, 0.9)',
-    shadowColor: '#F59E0B',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.4,
-    shadowRadius: 12,
-    elevation: 8,
   },
   // Floating glassmorphism score badge - overlaps image/content
   shareFloatingScore: {

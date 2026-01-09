@@ -18,20 +18,20 @@ export function getChallengeGradientColors(
   if (colorScheme === 'dark') {
     switch (mode) {
       case 'easy':
-        return ['#1a5d7e', '#0a3d5e'] as const;
+        return ['#b45309', '#92400e'] as const;
       case 'medium':
-        return ['#1a6e7e', '#0a4e5e'] as const;
+        return ['#c2410c', '#9a3412'] as const;
       case 'hard':
-        return ['#1a7e7e', '#0a5e5e'] as const;
+        return ['#dc2626', '#b91c1c'] as const;
     }
   } else {
     switch (mode) {
       case 'easy':
-        return ['#0a7ea4', '#085d7a'] as const;
+        return ['#fcd34d', '#f59e0b'] as const;
       case 'medium':
-        return ['#0a8ea4', '#086d7a'] as const;
+        return ['#f59e0b', '#ea580c'] as const;
       case 'hard':
-        return ['#0a9ea4', '#087d7a'] as const;
+        return ['#ea580c', '#dc2626'] as const;
     }
   }
 }

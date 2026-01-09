@@ -72,11 +72,14 @@ export const onChallengeCompleted = functions.firestore
     }
 
     // Update challenge with winner info
+    // winnerDetermined is set to true to signal that all winner fields are ready
+    // This prevents race conditions where status is 'completed' but winnerId/isTie aren't set yet
     await change.after.ref.update({
       status: 'completed',
       completedAt: admin.firestore.FieldValue.serverTimestamp(),
       winnerId,
       isTie,
+      winnerDetermined: true,
     });
 
     // Send push notifications to both players

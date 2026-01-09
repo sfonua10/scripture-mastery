@@ -151,7 +151,16 @@ export function usePushNotifications() {
     (response: NotificationsTypes.NotificationResponse) => {
       const data = response.notification.request.content.data;
 
-      // Handle challenge notifications
+      // Handle daily challenge notifications
+      if (data?.type === 'daily_challenge') {
+        router.push({
+          pathname: '/game',
+          params: { mode: 'daily' },
+        });
+        return;
+      }
+
+      // Handle multiplayer challenge notifications
       if (data?.challengeId) {
         router.push({
           pathname: '/challenge/result',

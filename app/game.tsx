@@ -664,11 +664,13 @@ export default function GameScreen() {
 
   // Challenge scriptures and question tracking
   const [challengeScriptureIndex, setChallengeScriptureIndex] = useState(0);
-  const totalQuestions = isCreatingChallenge && questionCountParam
-    ? parseInt(questionCountParam, 10)
-    : isChallengeMode && challenge
-      ? challenge.questionCount
-      : TOTAL_QUESTIONS;
+  const totalQuestions = isDailyChallenge
+    ? 1
+    : isCreatingChallenge && questionCountParam
+      ? parseInt(questionCountParam, 10)
+      : isChallengeMode && challenge
+        ? challenge.questionCount
+        : TOTAL_QUESTIONS;
 
   const [currentScripture, setCurrentScripture] = useState<Scripture | null>(
     null

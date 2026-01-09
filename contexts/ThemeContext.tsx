@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react';
 import { useColorScheme as useSystemColorScheme } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
@@ -67,15 +67,28 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
-  const effectiveColorScheme: ColorScheme =
-    preference === 'system' ? (systemColorScheme ?? 'light') : preference;
+  const effectiveColorScheme = useMemo<ColorScheme>(
+    () => (preference === 'system' ? (systemColorScheme ?? 'light') : preference),
+    [preference, systemColorScheme]
+  );
+
+  const contextValue = useMemo<ThemeContextType>(
+    () => ({
+      preference,
+      setPreference,
+      effectiveColorScheme,
+      soundEnabled,
+      setSoundEnabled,
+    }),
+    [preference, setPreference, effectiveColorScheme, soundEnabled, setSoundEnabled]
+  );
 
   if (!isLoaded) {
     return null;
   }
 
   return (
-    <ThemeContext.Provider value={{ preference, setPreference, effectiveColorScheme, soundEnabled, setSoundEnabled }}>
+    <ThemeContext.Provider value={contextValue}>
       {children}
     </ThemeContext.Provider>
   );

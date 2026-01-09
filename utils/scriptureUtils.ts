@@ -19,14 +19,25 @@ export const getRandomScripture = (): Scripture => {
 
 /**
  * Get a random scripture that is different from the current one
+ * @param currentScripture - The current scripture to avoid
+ * @param maxAttempts - Maximum attempts before returning any scripture (prevents infinite loop)
  */
 export const getNextRandomScripture = (
-  currentScripture: Scripture
+  currentScripture: Scripture,
+  maxAttempts: number = 100
 ): Scripture => {
+  // Guard against single scripture or empty array
+  if (allScriptures.length <= 1) {
+    return allScriptures[0] ?? currentScripture;
+  }
+
   let randomScripture: Scripture;
+  let attempts = 0;
+
   do {
     randomScripture = getRandomScripture();
-  } while (randomScripture.text === currentScripture.text);
+    attempts++;
+  } while (randomScripture.text === currentScripture.text && attempts < maxAttempts);
 
   return randomScripture;
 };
@@ -91,6 +102,29 @@ export const getTodayDateString = (): string => {
 };
 
 /**
+ * Parse a guess into book and reference parts for proper comparison
+ * Handles formats like "John 3", "Alma 32:21", "D&C 76", "1 Nephi 3:7"
+ */
+const parseGuess = (guess: string): { book: string; chapter?: string; verse?: string } => {
+  const trimmed = guess.trim();
+
+  // Match patterns like "Book Chapter:Verse", "Book Chapter", or just "Book"
+  // Handles numbered books like "1 Nephi", "2 Kings", etc.
+  const match = trimmed.match(/^(.+?)\s+(\d+)(?::(\d+(?:-\d+)?))?$/);
+
+  if (match) {
+    return {
+      book: match[1],
+      chapter: match[2],
+      verse: match[3],
+    };
+  }
+
+  // No chapter/verse found, entire guess is the book name
+  return { book: trimmed };
+};
+
+/**
  * Check if a guess is correct based on the game mode
  */
 export const checkGuess = (
@@ -99,16 +133,24 @@ export const checkGuess = (
   mode: GameMode
 ): boolean => {
   const { book, chapter, verse } = scripture.reference;
-  const normalizedGuess = guess.trim().toLowerCase();
   const normalizedBook = normalizeBookName(book);
+  const parsed = parseGuess(guess);
+  const guessedBook = normalizeBookName(parsed.book);
 
   switch (mode) {
     case "easy":
-      return normalizeBookName(normalizedGuess) === normalizedBook;
+      // Just check the book name
+      return guessedBook === normalizedBook;
     case "medium":
-      return normalizeBookName(normalizedGuess) === `${normalizedBook} ${chapter}`;
+      // Check book and chapter
+      return guessedBook === normalizedBook && parsed.chapter === String(chapter);
     case "hard":
-      return normalizeBookName(normalizedGuess) === `${normalizedBook} ${chapter}:${verse}`;
+      // Check book, chapter, and verse
+      return (
+        guessedBook === normalizedBook &&
+        parsed.chapter === String(chapter) &&
+        parsed.verse === String(verse)
+      );
     default:
       return false;
   }

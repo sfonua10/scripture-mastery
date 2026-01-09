@@ -12,21 +12,23 @@ import {
   LayoutAnimation,
   UIManager,
   AccessibilityInfo,
+  Pressable,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { Stack, router } from 'expo-router';
+import { router } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import Constants from 'expo-constants';
 
 import { ThemedText } from '@/components/ThemedText';
-import { ThemedView } from '@/components/ThemedView';
 import { TutorialModal } from '@/components/TutorialModal';
 import { NicknameModal } from '@/components/NicknameModal';
+import { TimePickerModal } from '@/components/TimePickerModal';
 import { Colors } from '@/constants/Colors';
 import { useColorScheme } from '@/hooks/useColorScheme';
 import { useTutorial } from '@/hooks/useTutorial';
 import { useSound } from '@/hooks/useSound';
+import { useDailyChallengeNotifications } from '@/hooks/useDailyChallengeNotifications';
 import { useTheme, ThemePreference } from '@/contexts/ThemeContext';
 import { useAuth } from '@/contexts/AuthContext';
 
@@ -50,6 +52,7 @@ const THEME_OPTIONS: { value: ThemePreference; label: string; icon: keyof typeof
 const SECTION_CONFIG = {
   appearance: { icon: 'color-palette-outline' as const, title: 'Appearance' },
   sound: { icon: 'volume-high-outline' as const, title: 'Sound' },
+  notifications: { icon: 'notifications-outline' as const, title: 'Notifications' },
   leaderboard: { icon: 'trophy-outline' as const, title: 'Leaderboard' },
   account: { icon: 'person-outline' as const, title: 'Account' },
   resources: { icon: 'book-outline' as const, title: 'Resources' },
@@ -192,7 +195,7 @@ const ScoreProgressBar: React.FC<ScoreProgressBarProps> = ({ label, score, maxSc
       tension: 50,
       friction: 8,
     }).start();
-  }, [score, maxScore]);
+  }, [score, maxScore, progress]);
 
   const width = progress.interpolate({
     inputRange: [0, 1],
@@ -329,7 +332,22 @@ export default function SettingsScreen() {
     signOut,
   } = useAuth();
   const [showNicknameModal, setShowNicknameModal] = useState(false);
+  const [showTimePicker, setShowTimePicker] = useState(false);
   const [reduceMotion, setReduceMotion] = useState(false);
+
+  // Daily challenge notifications
+  const {
+    enabled: notificationsEnabled,
+    notificationTime,
+    formattedTime,
+    permissionStatus,
+    isLoading: notificationsLoading,
+    enableNotifications,
+    disableNotifications,
+    setNotificationTime,
+    openSettings: openNotificationSettings,
+    isAvailable: notificationsAvailable,
+  } = useDailyChallengeNotifications();
 
   // Check for reduced motion preference
   useEffect(() => {
@@ -337,6 +355,11 @@ export default function SettingsScreen() {
     const subscription = AccessibilityInfo.addEventListener('reduceMotionChanged', setReduceMotion);
     return () => subscription.remove();
   }, []);
+
+  const handleClose = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    router.back();
+  };
 
   const handleUpgradeToGoogle = async () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -414,6 +437,35 @@ export default function SettingsScreen() {
     }
   };
 
+  const handleNotificationToggle = async (value: boolean) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    if (value) {
+      const success = await enableNotifications();
+      if (!success && permissionStatus === 'denied') {
+        // Permission was denied, offer to open settings
+        Alert.alert(
+          'Notifications Disabled',
+          'To receive daily reminders, please enable notifications in your device settings.',
+          [
+            { text: 'Cancel', style: 'cancel' },
+            { text: 'Open Settings', onPress: openNotificationSettings },
+          ]
+        );
+      }
+    } else {
+      await disableNotifications();
+    }
+  };
+
+  const handleTimePickerOpen = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setShowTimePicker(true);
+  };
+
+  const handleTimeConfirm = async (hour: number, minute: number) => {
+    await setNotificationTime(hour, minute);
+  };
+
   const handleOpenTutorial = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     openTutorial();
@@ -435,21 +487,32 @@ export default function SettingsScreen() {
 
   const handleViewLeaderboard = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    router.push('/(tabs)/leaderboard');
+    router.back();
+    // Small delay to let the modal close before navigating
+    setTimeout(() => {
+      router.push('/(tabs)/leaderboard');
+    }, 100);
   };
 
   return (
-    <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
-      <Stack.Screen
-        options={{
-          title: "Settings",
-          headerStyle: {
-            backgroundColor: colors.background,
-          },
-          headerTintColor: colors.tint,
-          headerShadowVisible: false,
-        }}
-      />
+    <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]} edges={['top']}>
+      {/* Modal Header */}
+      <View style={[styles.modalHeader, { borderBottomColor: colors.border }]}>
+        <View style={styles.modalHeaderLeft} />
+        <ThemedText style={styles.modalTitle}>Settings</ThemedText>
+        <Pressable
+          onPress={handleClose}
+          style={({ pressed }) => [
+            styles.closeButton,
+            { backgroundColor: colors.border + '60' },
+            pressed && styles.closeButtonPressed,
+          ]}
+          accessibilityLabel="Close settings"
+          accessibilityRole="button"
+        >
+          <Ionicons name="close" size={20} color={colors.text} />
+        </Pressable>
+      </View>
 
       <ScrollView
         style={styles.scrollView}
@@ -505,6 +568,55 @@ export default function SettingsScreen() {
             </SettingsRow>
           </SettingsCard>
         </View>
+
+        {/* Notifications Section */}
+        {notificationsAvailable && (
+          <View style={styles.section}>
+            <SectionHeader
+              icon={SECTION_CONFIG.notifications.icon}
+              title={SECTION_CONFIG.notifications.title}
+              showDivider
+              tintColor={colors.tint}
+              borderColor={colors.border}
+            />
+            <SettingsCard cardColor={colors.card} borderColor={colors.border}>
+              <SettingsRow
+                label="Daily Challenge Reminder"
+                subtitle="Get reminded to complete your daily challenge"
+                colors={colors}
+                isFirst
+                isLast={!notificationsEnabled}
+                accessibilityLabel="Daily Challenge Reminder toggle"
+                accessibilityHint="Double tap to toggle daily challenge reminders"
+              >
+                <Switch
+                  value={notificationsEnabled}
+                  onValueChange={handleNotificationToggle}
+                  trackColor={{ false: colors.border, true: colors.tint + '60' }}
+                  thumbColor={notificationsEnabled ? colors.tint : '#f4f3f4'}
+                  accessibilityLabel="Daily challenge reminders"
+                  disabled={notificationsLoading}
+                />
+              </SettingsRow>
+              {notificationsEnabled && (
+                <SettingsRow
+                  label="Reminder Time"
+                  subtitle="When to receive your reminder"
+                  onPress={handleTimePickerOpen}
+                  showChevron
+                  colors={colors}
+                  isLast
+                  accessibilityLabel={`Reminder time: ${formattedTime}`}
+                  accessibilityHint="Double tap to change reminder time"
+                >
+                  <ThemedText style={[styles.timeValue, { color: colors.tint }]}>
+                    {formattedTime}
+                  </ThemedText>
+                </SettingsRow>
+              )}
+            </SettingsCard>
+          </View>
+        )}
 
         {/* Leaderboard Section */}
         <View style={styles.section}>
@@ -706,6 +818,14 @@ export default function SettingsScreen() {
         title={hasJoinedLeaderboard ? 'Edit Nickname' : 'Join Leaderboard'}
         subtitle={hasJoinedLeaderboard ? 'Change your display name' : 'Choose a nickname to compete on the leaderboard'}
       />
+
+      <TimePickerModal
+        visible={showTimePicker}
+        onClose={() => setShowTimePicker(false)}
+        onConfirm={handleTimeConfirm}
+        initialHour={notificationTime.hour}
+        initialMinute={notificationTime.minute}
+      />
     </SafeAreaView>
   );
 }
@@ -713,6 +833,31 @@ export default function SettingsScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  modalHeaderLeft: {
+    width: 32,
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+  },
+  closeButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  closeButtonPressed: {
+    opacity: 0.7,
   },
   scrollView: {
     flex: 1,
@@ -951,6 +1096,10 @@ const styles = StyleSheet.create({
   versionValue: {
     fontSize: 16,
     opacity: 0.5,
+  },
+  timeValue: {
+    fontSize: 16,
+    fontWeight: '500',
   },
   footer: {
     paddingVertical: 32,

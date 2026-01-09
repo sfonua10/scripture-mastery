@@ -13,6 +13,7 @@ import Animated, {
 import { ThemedText } from '@/components/ThemedText';
 import { TutorialModal } from '@/components/TutorialModal';
 import { DailyChallengeCard } from '@/components/DailyChallengeCard';
+import { ProfileButton } from '@/components/ProfileButton';
 import { useColorScheme } from '@/hooks/useColorScheme';
 import { useTutorial } from '@/hooks/useTutorial';
 import { Colors } from '@/constants/Colors';
@@ -196,35 +197,23 @@ export default function HomeScreen() {
     <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
       {/* Compact inline header */}
       <View style={styles.header}>
-        <Image
-          source={iconSource}
-          style={styles.headerIcon}
-          contentFit="contain"
-          accessibilityLabel="Scripture Mastery app icon"
-        />
-        <ThemedText style={styles.headerTitle}>Scripture Mastery</ThemedText>
+        <View style={styles.headerLeft}>
+          <Image
+            source={iconSource}
+            style={styles.headerIcon}
+            contentFit="contain"
+            accessibilityLabel="Scripture Mastery app icon"
+          />
+          <ThemedText style={styles.headerTitle}>Scripture Mastery</ThemedText>
+        </View>
+        <ProfileButton onPress={() => router.push('/settings')} />
       </View>
 
       <View style={styles.content}>
         {/* Daily Challenge Card */}
         <DailyChallengeCard onPress={handleDailyChallengePress} />
 
-        {/* Segmented difficulty control */}
-        <View style={styles.difficultyContainer}>
-          {DIFFICULTY_OPTIONS.map(({ mode, label }, index) => (
-            <DifficultySegment
-              key={mode}
-              mode={mode}
-              label={label}
-              isFirst={index === 0}
-              isLast={index === DIFFICULTY_OPTIONS.length - 1}
-              onPress={() => handleModeSelect(mode)}
-              colorScheme={colorScheme}
-            />
-          ))}
-        </View>
-
-        {/* Single Challenge Friends row */}
+        {/* Challenge Friends row */}
         <AnimatedPressable
           style={[
             styles.challengeRow,
@@ -244,6 +233,24 @@ export default function HomeScreen() {
           </ThemedText>
           <Ionicons name="chevron-forward" size={20} color={warmAccent} style={{ opacity: 0.6 }} />
         </AnimatedPressable>
+
+        {/* Practice Mode section */}
+        <ThemedText style={styles.sectionTitle}>Practice Mode</ThemedText>
+
+        {/* Segmented difficulty control */}
+        <View style={styles.difficultyContainer}>
+          {DIFFICULTY_OPTIONS.map(({ mode, label }, index) => (
+            <DifficultySegment
+              key={mode}
+              mode={mode}
+              label={label}
+              isFirst={index === 0}
+              isLast={index === DIFFICULTY_OPTIONS.length - 1}
+              onPress={() => handleModeSelect(mode)}
+              colorScheme={colorScheme}
+            />
+          ))}
+        </View>
       </View>
 
       <TutorialModal visible={showTutorial} onDismiss={dismissTutorial} />
@@ -258,8 +265,13 @@ const styles = StyleSheet.create({
   header: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'space-between',
     paddingVertical: 16,
     paddingHorizontal: 20,
+  },
+  headerLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
   },
   headerIcon: {
     width: 44,
@@ -279,7 +291,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     borderRadius: 14,
     overflow: 'hidden',
-    marginBottom: 20,
     // Subtle shadow
     elevation: 4,
     shadowColor: '#000',
@@ -312,6 +323,14 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     borderWidth: 1,
     borderColor: 'rgba(180, 83, 9, 0.15)',
+    marginBottom: 24,
+  },
+  sectionTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    opacity: 0.6,
+    marginBottom: 10,
+    marginLeft: 4,
   },
   challengeRowText: {
     flex: 1,

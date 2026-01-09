@@ -117,6 +117,7 @@ export interface Challenge {
   // Winner determination (set by Cloud Function)
   winnerId?: string;
   isTie?: boolean;
+  winnerDetermined?: boolean;      // Explicit flag set when winner calculation is complete
 }
 
 export interface ChallengeStats {

@@ -12,7 +12,8 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, Stack, useLocalSearchParams } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
-import { Ionicons } from '@expo/vector-icons';
+import { Ionicons, Feather } from '@expo/vector-icons';
+import * as Clipboard from 'expo-clipboard';
 import * as Haptics from 'expo-haptics';
 import * as Sharing from 'expo-sharing';
 import { captureRef } from 'react-native-view-shot';
@@ -20,6 +21,7 @@ import ConfettiCannon from 'react-native-confetti-cannon';
 
 import { ThemedText } from '@/components/ThemedText';
 import { ThemedView } from '@/components/ThemedView';
+import { GradientButton } from '@/components/GradientButton';
 import { Colors } from '@/constants/Colors';
 import { useColorScheme } from '@/hooks/useColorScheme';
 import { useChallenge } from '@/hooks/useChallenge';
@@ -33,6 +35,7 @@ export default function ChallengeResultScreen() {
   const { challenge, isLoading, getChallengeShareText, getChallengeDeepLink } = useChallenge(challengeId);
 
   const [showConfetti, setShowConfetti] = useState(false);
+  const [copied, setCopied] = useState(false);
   const scaleAnim = useRef(new Animated.Value(0)).current;
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const shareCardRef = useRef<View>(null);
@@ -47,10 +50,10 @@ export default function ChallengeResultScreen() {
     : challenge?.creatorNickname;
   const isWinner = challenge?.winnerId === user?.uid;
   const isTie = challenge?.isTie;
-  // Wait for winner data to be set before considering the challenge complete
-  // This prevents the race condition where status is 'completed' but winnerId/isTie aren't set yet
-  const isComplete = challenge?.status === 'completed' &&
-    (challenge?.winnerId !== undefined || challenge?.isTie === true);
+  // Check if challenge is complete: either winnerDetermined is set by Cloud Function,
+  // OR both scores exist (handles timing before Cloud Function completes)
+  const isComplete = challenge?.winnerDetermined === true ||
+    (challenge?.creatorScore !== undefined && challenge?.challengerScore !== undefined);
   const waitingForOpponent = !isComplete && userScore !== undefined;
 
   useEffect(() => {
@@ -129,21 +132,19 @@ export default function ChallengeResultScreen() {
     router.replace('/challenge/create');
   };
 
-  const handleHome = () => {
+  const handleCopyCode = async () => {
+    if (!challenge?.challengeCode) return;
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    router.replace('/(tabs)');
+    await Clipboard.setStringAsync(challenge.challengeCode);
+    setCopied(true);
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    setTimeout(() => setCopied(false), 1500);
   };
 
   const getResultColor = () => {
     if (!isComplete) return colors.tint;
     if (isTie) return '#FFC107';
     return isWinner ? '#4CAF50' : colors.textSecondary;
-  };
-
-  const getResultIcon = () => {
-    if (!isComplete) return 'hourglass-outline';
-    if (isTie) return 'swap-horizontal';
-    return isWinner ? 'trophy' : 'ribbon-outline';
   };
 
   const getResultText = () => {
@@ -256,132 +257,89 @@ export default function ChallengeResultScreen() {
               },
             ]}
           >
-            <View
-              style={[
-                styles.resultIcon,
-                { backgroundColor: getResultColor() + '20' },
-              ]}
-            >
-              <Ionicons
-                name={getResultIcon() as any}
-                size={52}
-                color={getResultColor()}
-              />
-            </View>
-
-            <ThemedText style={[styles.resultText, { color: getResultColor() }]}>
-              {getResultText()}
-            </ThemedText>
-
-            {/* Score comparison */}
-            <View style={[styles.scoreCard, { backgroundColor: colors.tint + '10' }]}>
-              {/* Your score */}
-              <View style={styles.scoreColumn}>
-                <ThemedText style={styles.playerLabel}>You</ThemedText>
-                <ThemedText
-                  style={[
-                    styles.scoreValue,
-                    isComplete && isWinner && !isTie && styles.winnerScore,
-                  ]}
-                >
-                  {typeof userScore === 'number' ? userScore : '-'}/{challenge.questionCount}
-                </ThemedText>
-              </View>
-
-              {/* VS */}
-              <View style={styles.vsContainer}>
-                <ThemedText style={[styles.vsText, { color: colors.textSecondary }]}>
-                  vs
-                </ThemedText>
-              </View>
-
-              {/* Opponent score */}
-              <View style={styles.scoreColumn}>
-                <ThemedText style={styles.playerLabel} numberOfLines={1}>
-                  {opponentName || 'Opponent'}
-                </ThemedText>
-                <ThemedText
-                  style={[
-                    styles.scoreValue,
-                    isComplete && !isWinner && !isTie && styles.winnerScore,
-                  ]}
-                >
-                  {isComplete ? (typeof opponentScore === 'number' ? opponentScore : '-') : '?'}/{challenge.questionCount}
-                </ThemedText>
-              </View>
-            </View>
-
-            {/* Challenge info */}
-            <View style={styles.infoContainer}>
-              <View style={styles.infoRow}>
-                <Ionicons name="speedometer-outline" size={18} color={colors.text + '80'} />
-                <ThemedText style={styles.infoText}>
-                  {capitalize(challenge.difficulty)} Difficulty
-                </ThemedText>
-              </View>
-            </View>
-
+            {/* Waiting state: "You scored" + hero score */}
             {waitingForOpponent && (
-              <View style={[styles.waitingBanner, { backgroundColor: colors.tint + '20' }]}>
-                <Ionicons name="time-outline" size={20} color={colors.tint} />
-                <ThemedText style={[styles.waitingText, { color: colors.tint }]}>
-                  Share the challenge code so your friend can play!
-                </ThemedText>
-              </View>
+              <>
+                <ThemedText style={styles.scoreLabel}>You scored</ThemedText>
+                <View style={styles.heroScore}>
+                  <ThemedText style={[styles.scoreNumber, { color: getResultColor() }]}>
+                    {userScore}
+                  </ThemedText>
+                  <ThemedText style={styles.scoreDivider}>/</ThemedText>
+                  <ThemedText style={styles.scoreTotalNumber}>{challenge.questionCount}</ThemedText>
+                </View>
+                <ThemedText style={styles.statusText}>Waiting for opponent...</ThemedText>
+              </>
             )}
-          </Animated.View>
 
-          {/* Action buttons */}
-          <View style={styles.actions}>
-            <TouchableOpacity
-              style={styles.buttonContainer}
-              onPress={handleShare}
-              accessibilityRole="button"
-              accessibilityLabel={waitingForOpponent ? 'Share challenge with friends' : 'Share your result'}
-            >
-              <LinearGradient
-                colors={[colors.tint, colors.tint + 'dd']}
-                style={styles.actionButton}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 0 }}
-              >
-                <Ionicons name="share-outline" size={24} color="white" />
-                <ThemedText style={styles.actionButtonText}>
-                  {waitingForOpponent ? 'Share Challenge' : 'Share Result'}
-                </ThemedText>
-              </LinearGradient>
-            </TouchableOpacity>
-
+            {/* Complete state: Result text + score comparison */}
             {isComplete && (
+              <>
+                <ThemedText style={[styles.resultText, { color: getResultColor() }]}>
+                  {getResultText()}
+                </ThemedText>
+
+                <View style={styles.scoreComparison}>
+                  <View style={styles.scoreColumn}>
+                    <ThemedText style={[styles.comparisonScore, isWinner && !isTie && styles.winnerScore]}>
+                      {userScore}/{challenge.questionCount}
+                    </ThemedText>
+                    <ThemedText style={styles.playerLabel}>You</ThemedText>
+                  </View>
+                  <ThemedText style={styles.vsText}>vs</ThemedText>
+                  <View style={styles.scoreColumn}>
+                    <ThemedText style={[styles.comparisonScore, !isWinner && !isTie && styles.winnerScore]}>
+                      {opponentScore}/{challenge.questionCount}
+                    </ThemedText>
+                    <ThemedText style={styles.playerLabel} numberOfLines={1}>
+                      {opponentName || 'Opponent'}
+                    </ThemedText>
+                  </View>
+                </View>
+              </>
+            )}
+
+            {/* Action buttons */}
+            <View style={styles.actions}>
+              <GradientButton
+                onPress={handleShare}
+                label={waitingForOpponent ? 'Share Challenge' : 'Share Result'}
+                variant="primary"
+                size="large"
+                icon={<Ionicons name="share-outline" size={24} color="white" />}
+              />
+              {isComplete && (
+                <GradientButton
+                  onPress={handleRematch}
+                  label="New Challenge"
+                  variant="secondary"
+                  size="large"
+                  icon={<Ionicons name="refresh" size={24} color="white" />}
+                />
+              )}
+            </View>
+
+            {/* Code row with copy - only when waiting */}
+            {waitingForOpponent && (
               <TouchableOpacity
-                style={styles.buttonContainer}
-                onPress={handleRematch}
-                accessibilityRole="button"
-                accessibilityLabel="Create a new challenge"
+                style={styles.codeRow}
+                onPress={handleCopyCode}
+                accessibilityLabel={`Copy challenge code ${challenge.challengeCode}`}
               >
-                <LinearGradient
-                  colors={['#4CAF50', '#388E3C']}
-                  style={styles.actionButton}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 0 }}
-                >
-                  <Ionicons name="refresh" size={24} color="white" />
-                  <ThemedText style={styles.actionButtonText}>New Challenge</ThemedText>
-                </LinearGradient>
+                <ThemedText style={styles.inlineCode}>{challenge.challengeCode}</ThemedText>
+                <Feather
+                  name={copied ? 'check' : 'copy'}
+                  size={16}
+                  color={copied ? colors.tint : colors.icon}
+                />
               </TouchableOpacity>
             )}
 
-            <TouchableOpacity
-              style={styles.homeButton}
-              onPress={handleHome}
-              accessibilityRole="button"
-              accessibilityLabel="Return to home screen"
-            >
-              <ThemedText style={[styles.homeButtonText, { color: colors.tint }]}>
-                Back to Home
-              </ThemedText>
-            </TouchableOpacity>
-          </View>
+            {/* Metadata */}
+            <ThemedText style={styles.metadata}>
+              {capitalize(challenge.difficulty)} · {challenge.questionCount} Questions
+            </ThemedText>
+          </Animated.View>
         </ThemedView>
       </SafeAreaView>
     </>
@@ -404,114 +362,110 @@ const styles = StyleSheet.create({
   },
   resultContainer: {
     alignItems: 'center',
-    marginBottom: 32,
   },
-  resultIcon: {
-    width: 100,
-    height: 100,
-    borderRadius: 50,
-    alignItems: 'center',
+  // Waiting state styles
+  scoreLabel: {
+    fontSize: 14,
+    fontWeight: '300',
+    opacity: 0.6,
+    marginBottom: 8,
+  },
+  heroScore: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
     justifyContent: 'center',
     marginBottom: 16,
   },
+  scoreNumber: {
+    lineHeight: 80,
+    fontSize: 72,
+    fontWeight: '800',
+    letterSpacing: -2,
+  },
+  scoreDivider: {
+    lineHeight: 56,
+    fontSize: 48,
+    fontWeight: '200',
+    opacity: 0.3,
+    marginHorizontal: 4,
+  },
+  scoreTotalNumber: {
+    lineHeight: 56,
+    fontSize: 48,
+    fontWeight: '400',
+    opacity: 0.5,
+  },
+  statusText: {
+    fontSize: 14,
+    fontWeight: '300',
+    opacity: 0.5,
+    marginBottom: 32,
+  },
+  // Complete state styles
   resultText: {
-    fontSize: 32,
+    fontSize: 28,
+    lineHeight: 36,
     fontWeight: 'bold',
     marginBottom: 24,
   },
-  scoreCard: {
+  scoreComparison: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     width: '100%',
-    paddingVertical: 24,
-    paddingHorizontal: 16,
-    borderRadius: 16,
-    marginBottom: 16,
+    marginBottom: 32,
   },
   scoreColumn: {
     flex: 1,
     alignItems: 'center',
   },
+  comparisonScore: {
+    fontSize: 28,
+    lineHeight: 36,
+    fontWeight: '700',
+    marginBottom: 4,
+  },
   playerLabel: {
     fontSize: 14,
-    opacity: 0.7,
-    marginBottom: 8,
+    fontWeight: '300',
+    opacity: 0.6,
     maxWidth: 100,
-  },
-  scoreValue: {
-    fontSize: 36,
-    fontWeight: 'bold',
-    marginTop: 8,
   },
   winnerScore: {
     color: '#4CAF50',
   },
-  vsContainer: {
-    paddingHorizontal: 16,
-  },
   vsText: {
     fontSize: 16,
-    fontWeight: '500',
-    opacity: 0.6,
+    fontWeight: '200',
+    opacity: 0.4,
+    marginHorizontal: 16,
   },
-  infoContainer: {
-    alignItems: 'center',
-    gap: 8,
-  },
-  infoRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  infoText: {
-    fontSize: 14,
-    opacity: 0.7,
-  },
-  waitingBanner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    padding: 16,
-    borderRadius: 12,
-    marginTop: 16,
-  },
-  waitingText: {
-    flex: 1,
-    fontSize: 14,
-    fontWeight: '500',
-  },
+  // Action buttons and code row
   actions: {
+    width: '100%',
     gap: 12,
+    marginBottom: 8,
   },
-  buttonContainer: {
-    borderRadius: 12,
-    overflow: 'hidden',
-    elevation: 3,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-  },
-  actionButton: {
+  codeRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 12,
-    padding: 18,
+    gap: 8,
+    marginTop: 24,
+    paddingVertical: 8,
   },
-  actionButtonText: {
-    color: 'white',
-    fontSize: 18,
-    fontWeight: 'bold',
-  },
-  homeButton: {
-    alignItems: 'center',
-    padding: 16,
-  },
-  homeButtonText: {
+  inlineCode: {
     fontSize: 16,
-    fontWeight: '600',
+    fontWeight: '500',
+    letterSpacing: 2,
+    opacity: 0.7,
+  },
+  metadata: {
+    fontSize: 12,
+    fontWeight: '300',
+    opacity: 0.4,
+    marginTop: 8,
+    textAlign: 'center',
   },
   // Share card styles (hidden, off-screen for capture)
   shareCardWrapper: {

@@ -54,6 +54,7 @@ function mapChallengeDoc(docId: string, data: any): Challenge {
     completedAt: data.completedAt?.toDate(),
     winnerId: data.winnerId,
     isTie: data.isTie,
+    winnerDetermined: data.winnerDetermined,
   };
 }
 
@@ -286,10 +287,12 @@ export function useChallenge(challengeId?: string) {
 
   /**
    * Join an existing challenge
+   * @param nicknameOverride - Optional nickname to use instead of userProfile.nickname (for race condition when nickname was just set)
    */
   const joinChallenge = useCallback(
-    async (challengeToJoin: Challenge): Promise<boolean> => {
-      if (!user || !userProfile?.nickname) {
+    async (challengeToJoin: Challenge, nicknameOverride?: string): Promise<boolean> => {
+      const nickname = nicknameOverride || userProfile?.nickname;
+      if (!user || !nickname) {
         setError('You must have a nickname to join challenges');
         return false;
       }
@@ -310,8 +313,8 @@ export function useChallenge(challengeId?: string) {
       try {
         await updateDoc(doc(db, 'challenges', challengeToJoin.id), {
           challengerId: user.uid,
-          challengerNickname: userProfile.nickname,
-          challengerPhotoURL: userProfile.photoURL || null,
+          challengerNickname: nickname,
+          challengerPhotoURL: userProfile?.photoURL || null,
           status: 'accepted',
         });
 
@@ -407,6 +410,36 @@ export function useChallenge(challengeId?: string) {
   );
 
   /**
+   * Cancel a pending challenge (creator only)
+   */
+  const cancelChallenge = useCallback(
+    async (challengeIdToCancel: string): Promise<boolean> => {
+      if (!user) {
+        setError('Not authenticated');
+        return false;
+      }
+
+      setIsLoading(true);
+      setError(null);
+
+      try {
+        await updateDoc(doc(db, 'challenges', challengeIdToCancel), {
+          status: 'expired',
+        });
+
+        setIsLoading(false);
+        return true;
+      } catch (err) {
+        console.error('Cancel challenge error:', err);
+        setError('Failed to cancel challenge');
+        setIsLoading(false);
+        return false;
+      }
+    },
+    [user]
+  );
+
+  /**
    * Get the deep link URL for a challenge
    */
   const getChallengeDeepLink = useCallback((code: string): string => {
@@ -439,6 +472,7 @@ export function useChallenge(challengeId?: string) {
     joinChallenge,
     submitCreatorScore,
     submitChallengerScore,
+    cancelChallenge,
     getChallengeDeepLink,
     getChallengeShareText,
   };

@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import {
   StyleSheet,
   TouchableOpacity,
@@ -26,6 +26,10 @@ import { useAuth } from '@/contexts/AuthContext';
 import { Challenge, GameMode } from '@/types/scripture';
 import { getChallengeGradientColors, capitalize } from '@/utils/styleUtils';
 
+// Module-level constants to prevent re-render issues
+const GRADIENT_START = { x: 0, y: 0 };
+const GRADIENT_END = { x: 1, y: 0 };
+
 export default function JoinChallengeScreen() {
   const colorScheme = useColorScheme();
   const { code: initialCode } = useLocalSearchParams<{ code?: string }>();
@@ -37,7 +41,8 @@ export default function JoinChallengeScreen() {
   const [isJoining, setIsJoining] = useState(false);
   const [showNicknameModal, setShowNicknameModal] = useState(false);
 
-  const colors = Colors[colorScheme ?? 'light'];
+  // Memoize colors to prevent object recreation on every render
+  const colors = useMemo(() => Colors[colorScheme ?? 'light'], [colorScheme]);
 
   // Memoized styles to prevent re-renders on every keystroke
   const codeInputStyle = useMemo(() => ({
@@ -58,6 +63,22 @@ export default function JoinChallengeScreen() {
       : [colors.tint + '60', colors.tint + '40'] as const,
   [colors.tint, code.length]);
 
+  // Memoize styles for found challenge section to avoid inline object creation
+  const successIconStyle = useMemo(() => ({
+    backgroundColor: '#4CAF50' + '20',
+  }), []);
+
+  const challengeCardStyle = useMemo(() => ({
+    backgroundColor: colors.tint + '10',
+  }), [colors.tint]);
+
+  // Memoize challenge gradient colors to avoid recalculation on every render
+  const challengeGradient = useMemo(() =>
+    foundChallenge
+      ? getChallengeGradientColors(foundChallenge.difficulty, colorScheme)
+      : [colors.tint, colors.tint + 'dd'] as const,
+  [foundChallenge?.difficulty, colorScheme, colors.tint]);
+
   // Auto-search if code is provided via deep link
   useEffect(() => {
     const autoSearch = async () => {
@@ -76,15 +97,21 @@ export default function JoinChallengeScreen() {
     autoSearch();
   }, [initialCode, getChallengeByCode]);
 
+  // Use ref to track foundChallenge for handleCodeChange without causing re-render
+  const foundChallengeRef = useRef(foundChallenge);
+  foundChallengeRef.current = foundChallenge;
+
   const handleCodeChange = useCallback((text: string) => {
     // Only allow alphanumeric, convert to uppercase
     const cleaned = text.replace(/[^A-Za-z0-9]/g, '').toUpperCase();
     setCode(cleaned.slice(0, 6));
-    // Reset found challenge if code changes
-    setFoundChallenge((prev) => prev ? null : prev);
+    // Only reset found challenge if there's actually one to reset (avoids unnecessary state updates)
+    if (foundChallengeRef.current) {
+      setFoundChallenge(null);
+    }
   }, []);
 
-  const handleSearch = async (codeToSearch?: string) => {
+  const handleSearch = useCallback(async (codeToSearch?: string) => {
     const searchCode = codeToSearch || code;
     if (searchCode.length !== 6) {
       Alert.alert('Invalid Code', 'Please enter a 6-character challenge code.');
@@ -99,13 +126,13 @@ export default function JoinChallengeScreen() {
     } else {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
     }
-  };
+  }, [code, getChallengeByCode]);
 
-  const proceedWithJoin = async () => {
+  const proceedWithJoin = async (nicknameOverride?: string) => {
     if (!foundChallenge) return;
 
     setIsJoining(true);
-    const success = await joinChallenge(foundChallenge);
+    const success = await joinChallenge(foundChallenge, nicknameOverride);
     setIsJoining(false);
 
     if (success) {
@@ -143,15 +170,15 @@ export default function JoinChallengeScreen() {
     try {
       await setNickname(newNickname);
       setShowNicknameModal(false);
-      // Call proceedWithJoin directly - bypasses nickname check
-      proceedWithJoin();
+      // Pass nickname directly to avoid race condition with userProfile state
+      proceedWithJoin(newNickname);
     } catch (err) {
       Alert.alert('Error', 'Failed to save nickname. Please try again.');
     }
   };
 
   // Memoized handlers to prevent unnecessary re-renders
-  const handleSearchPress = useCallback(() => handleSearch(), []);
+  const handleSearchPress = useCallback(() => handleSearch(), [handleSearch]);
 
   const handleBackPress = useCallback(() => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -197,8 +224,8 @@ export default function JoinChallengeScreen() {
         <LinearGradient
           colors={searchButtonGradient}
           style={styles.searchButton}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 0 }}
+          start={GRADIENT_START}
+          end={GRADIENT_END}
         >
           {isLoading ? (
             <ActivityIndicator color="white" />
@@ -215,13 +242,13 @@ export default function JoinChallengeScreen() {
 
   const renderFoundChallenge = () => (
     <>
-      <View style={[styles.iconContainer, { backgroundColor: '#4CAF50' + '20' }]}>
+      <View style={[styles.iconContainer, successIconStyle]}>
         <Ionicons name="checkmark-circle" size={48} color="#4CAF50" />
       </View>
 
       <ThemedText style={styles.title}>Challenge Found!</ThemedText>
 
-      <View style={[styles.challengeCard, { backgroundColor: colors.tint + '10' }]}>
+      <View style={[styles.challengeCard, challengeCardStyle]}>
         <View style={styles.challengerInfo}>
           {foundChallenge?.creatorPhotoURL ? (
             <Image
@@ -275,10 +302,10 @@ export default function JoinChallengeScreen() {
         disabled={isJoining}
       >
         <LinearGradient
-          colors={getChallengeGradientColors(foundChallenge?.difficulty || 'easy', colorScheme)}
+          colors={challengeGradient}
           style={styles.searchButton}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 0 }}
+          start={GRADIENT_START}
+          end={GRADIENT_END}
         >
           {isJoining ? (
             <ActivityIndicator color="white" />

@@ -32,5 +32,7 @@ export { useTutorial } from './useTutorial';
 export { useLeaderboard } from './useLeaderboard';
 export { useDailyChallenge } from './useDailyChallenge';
 export { useChallenge } from './useChallenge';
+export { useMyChallenges } from './useMyChallenges';
 export { useSound } from './useSound';
 export { usePushNotifications } from './usePushNotifications';
+export { useDailyChallengeNotifications } from './useDailyChallengeNotifications';
