@@ -8,6 +8,8 @@ import Animated, {
   interpolate,
   Extrapolation,
 } from 'react-native-reanimated';
+import * as Clipboard from 'expo-clipboard';
+import * as Haptics from 'expo-haptics';
 import { Ionicons } from '@expo/vector-icons';
 import { ThemedText } from '@/components/ThemedText';
 import { Colors } from '@/constants/Colors';
@@ -71,7 +73,7 @@ function getExpirationText(expiresAt: Date): { text: string; isUrgent: boolean }
   return { text: `Expires in ${diffDays} days`, isUrgent: false };
 }
 
-function Avatar({ photoURL, nickname, size = 44 }: { photoURL?: string | null; nickname: string; size?: number }) {
+function Avatar({ photoURL, nickname, size = 36 }: { photoURL?: string | null; nickname: string; size?: number }) {
   const colorScheme = useColorScheme();
   const colors = Colors[colorScheme ?? 'light'];
 
@@ -165,6 +167,13 @@ export function ChallengeListItem({ challenge, currentUserId, onPress, onCancel,
     );
   };
 
+  // Handle copy challenge code
+  const handleCopyCode = async () => {
+    await Clipboard.setStringAsync(challenge.challengeCode);
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    Alert.alert('Copied!', `Challenge code ${challenge.challengeCode} copied to clipboard`);
+  };
+
   // Animation
   const animationProgress = useSharedValue(0);
 
@@ -213,7 +222,12 @@ export function ChallengeListItem({ challenge, currentUserId, onPress, onCancel,
       <Animated.View
         style={[
           styles.container,
-          { backgroundColor: colors.card, borderColor: colors.border },
+          {
+            backgroundColor: colors.card,
+            borderColor: colors.border,
+            borderLeftColor: status.color,
+            borderLeftWidth: 3,
+          },
           animatedStyle,
         ]}
       >
@@ -225,11 +239,10 @@ export function ChallengeListItem({ challenge, currentUserId, onPress, onCancel,
             <View
               style={[
                 styles.avatar,
-                styles.waitingAvatar,
-                { backgroundColor: `${STATUS_COLORS.waiting}20` },
+                { backgroundColor: `${STATUS_COLORS.waiting}15` },
               ]}
             >
-              <Ionicons name="hourglass-outline" size={20} color={STATUS_COLORS.waiting} />
+              <Ionicons name="hourglass-outline" size={16} color={STATUS_COLORS.waiting} />
             </View>
           )}
 
@@ -237,38 +250,39 @@ export function ChallengeListItem({ challenge, currentUserId, onPress, onCancel,
           <View style={styles.infoContainer}>
             <View style={styles.topRow}>
               <ThemedText style={styles.opponentName} numberOfLines={1}>
-                {opponentName}
+                {opponentName}{challenge.status === 'pending' ? '...' : ''}
               </ThemedText>
-              <View style={[styles.statusBadge, { backgroundColor: `${status.color}20` }]}>
-                <Ionicons name={status.icon as any} size={12} color={status.color} />
-                <ThemedText style={[styles.statusText, { color: status.color }]}>
-                  {status.text}
-                </ThemedText>
-              </View>
+              {/* Only show status badge for non-pending challenges */}
+              {challenge.status !== 'pending' && (
+                <View style={[styles.statusBadge, { backgroundColor: `${status.color}20` }]}>
+                  <Ionicons name={status.icon as any} size={12} color={status.color} />
+                  <ThemedText style={[styles.statusText, { color: status.color }]}>
+                    {status.text}
+                  </ThemedText>
+                </View>
+              )}
             </View>
 
+            {/* Line 1: Difficulty and question count */}
+            <ThemedText style={styles.metaText}>
+              {capitalize(challenge.difficulty)} · {challenge.questionCount} Questions
+            </ThemedText>
+
+            {/* Line 2: Time or urgent expiry */}
             <View style={styles.bottomRow}>
-              <View style={styles.metaContainer}>
-                <ThemedText style={styles.metaText}>
-                  {capitalize(challenge.difficulty)} · {challenge.questionCount} Qs
+              {challenge.status === 'expired' ? (
+                <ThemedText style={[styles.expiredText, { color: STATUS_COLORS.expired }]}>
+                  No one joined
                 </ThemedText>
-                {challenge.status !== 'expired' && (
-                  <ThemedText style={[styles.timeText, { color: colors.text }]}>
-                    {getTimeAgo(challenge.createdAt)}
-                  </ThemedText>
-                )}
-                {/* Expiration countdown for pending challenges */}
-                {expirationInfo && (
-                  <ThemedText
-                    style={[
-                      styles.expirationText,
-                      { color: expirationInfo.isUrgent ? '#EF4444' : STATUS_COLORS.waiting },
-                    ]}
-                  >
-                    {expirationInfo.text}
-                  </ThemedText>
-                )}
-              </View>
+              ) : expirationInfo?.isUrgent ? (
+                <ThemedText style={[styles.expirationText, { color: '#EF4444' }]}>
+                  {expirationInfo.text}
+                </ThemedText>
+              ) : (
+                <ThemedText style={[styles.timeText, { color: colors.text }]}>
+                  {getTimeAgo(challenge.createdAt)}
+                </ThemedText>
+              )}
 
               {/* Score display for completed challenges */}
               {challenge.status === 'completed' && myScore !== undefined && opponentScore !== undefined && (
@@ -287,38 +301,35 @@ export function ChallengeListItem({ challenge, currentUserId, onPress, onCancel,
                   </ThemedText>
                 </View>
               )}
-
-              {/* "No one joined" for expired challenges */}
-              {challenge.status === 'expired' && (
-                <ThemedText style={[styles.expiredText, { color: STATUS_COLORS.expired }]}>
-                  No one joined
-                </ThemedText>
-              )}
-
-              {/* Challenge code for pending challenges */}
-              {challenge.status === 'pending' && isCreator && (
-                <View style={styles.codeRow}>
-                  <View style={[styles.codeContainer, { backgroundColor: `${colors.tint}10` }]}>
-                    <ThemedText style={[styles.codeText, { color: colors.tint }]}>
-                      {challenge.challengeCode}
-                    </ThemedText>
-                  </View>
-                  {onCancel && (
-                    <TouchableOpacity
-                      onPress={handleCancel}
-                      style={styles.cancelButton}
-                      hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                    >
-                      <Ionicons name="trash-outline" size={16} color="#EF4444" />
-                    </TouchableOpacity>
-                  )}
-                </View>
-              )}
             </View>
           </View>
 
-          {/* Chevron */}
-          <Ionicons name="chevron-forward" size={20} color={colors.text} style={{ opacity: 0.3 }} />
+          {/* Action buttons for pending challenges (creator only) */}
+          {challenge.status === 'pending' && isCreator && (
+            <View style={styles.actionButtons}>
+              <View style={[styles.codeChip, { backgroundColor: `${colors.text}08` }]}>
+                <ThemedText style={styles.codeText}>
+                  {challenge.challengeCode}
+                </ThemedText>
+              </View>
+              <TouchableOpacity
+                onPress={handleCopyCode}
+                style={[styles.shareButton, { backgroundColor: `${colors.tint}15` }]}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              >
+                <Ionicons name="share-outline" size={18} color={colors.tint} />
+              </TouchableOpacity>
+              {onCancel && (
+                <TouchableOpacity
+                  onPress={handleCancel}
+                  style={styles.cancelButton}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                >
+                  <Ionicons name="trash-outline" size={18} color="#EF4444" />
+                </TouchableOpacity>
+              )}
+            </View>
+          )}
         </View>
       </Animated.View>
     </TouchableOpacity>
@@ -339,19 +350,14 @@ const styles = StyleSheet.create({
     padding: 12,
   },
   avatar: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     alignItems: 'center',
     justifyContent: 'center',
   },
   avatarText: {
     fontWeight: '600',
-  },
-  waitingAvatar: {
-    borderWidth: 2,
-    borderStyle: 'dashed',
-    borderColor: STATUS_COLORS.waiting,
   },
   infoContainer: {
     flex: 1,
@@ -362,10 +368,10 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 4,
+    marginBottom: 2,
   },
   opponentName: {
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: '600',
     flex: 1,
     marginRight: 8,
@@ -386,15 +392,11 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-  },
-  metaContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
+    marginTop: 2,
   },
   metaText: {
     fontSize: 13,
-    opacity: 0.6,
+    opacity: 0.5,
   },
   timeText: {
     fontSize: 12,
@@ -413,26 +415,31 @@ const styles = StyleSheet.create({
     opacity: 0.4,
     marginHorizontal: 4,
   },
-  codeContainer: {
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 4,
-  },
-  codeText: {
-    fontSize: 12,
-    fontWeight: '600',
-    fontFamily: 'monospace',
-  },
-  codeRow: {
+  actionButtons: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
   },
+  codeChip: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+  },
+  codeText: {
+    fontSize: 11,
+    fontWeight: '600',
+    fontFamily: 'monospace',
+    opacity: 0.5,
+  },
+  shareButton: {
+    padding: 8,
+    borderRadius: 8,
+  },
   cancelButton: {
-    padding: 4,
+    padding: 8,
   },
   expirationText: {
-    fontSize: 11,
+    fontSize: 12,
     fontWeight: '500',
   },
   expiredText: {

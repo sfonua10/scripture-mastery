@@ -341,6 +341,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           if (isMounted) setUser(firebaseUser);
           await loadUserProfile(firebaseUser.uid);
         } else {
+          // Clear state immediately to update UI before creating new anonymous session
+          if (isMounted) {
+            setUser(null);
+            setUserProfile(null);
+          }
           // Sign in anonymously (silent, no user interaction)
           try {
             await signInAnonymously(auth);
@@ -578,8 +583,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   // Derived values
-  const authProvider: AuthProviderType = userProfile?.authProvider || (user?.isAnonymous ? 'anonymous' : 'google');
-  const isGoogleLinked = authProvider === 'google' || authProvider === 'apple' || !user?.isAnonymous;
+  // Default to 'anonymous' when userProfile doesn't exist (during sign-out transition or new users)
+  const authProvider: AuthProviderType = userProfile?.authProvider || 'anonymous';
+  const isGoogleLinked = authProvider === 'google' || authProvider === 'apple';
   const googleDisplayName = userProfile?.displayName || null;
   const googleEmail = userProfile?.email || null;
 

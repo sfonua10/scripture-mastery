@@ -39,6 +39,7 @@ export default function JoinChallengeScreen() {
   const [code, setCode] = useState(initialCode?.toUpperCase() || '');
   const [foundChallenge, setFoundChallenge] = useState<Challenge | null>(null);
   const [isJoining, setIsJoining] = useState(false);
+  const [isSearching, setIsSearching] = useState(false);
   const [showNicknameModal, setShowNicknameModal] = useState(false);
 
   // Memoize colors to prevent object recreation on every render
@@ -84,8 +85,10 @@ export default function JoinChallengeScreen() {
     const autoSearch = async () => {
       if (initialCode && initialCode.length === 6) {
         const searchCode = initialCode.toUpperCase();
+        setIsSearching(true);
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
         const challenge = await getChallengeByCode(searchCode);
+        setIsSearching(false);
         if (challenge) {
           setFoundChallenge(challenge);
           Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
@@ -118,8 +121,12 @@ export default function JoinChallengeScreen() {
       return;
     }
 
+    setIsSearching(true);
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+
     const challenge = await getChallengeByCode(searchCode);
+
+    setIsSearching(false);
     if (challenge) {
       setFoundChallenge(challenge);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
@@ -216,10 +223,10 @@ export default function JoinChallengeScreen() {
       <TouchableOpacity
         style={styles.buttonContainer}
         onPress={handleSearchPress}
-        disabled={code.length !== 6 || isLoading}
+        disabled={code.length !== 6 || isSearching}
         accessibilityRole="button"
         accessibilityLabel="Search for challenge"
-        accessibilityState={{ disabled: code.length !== 6 || isLoading }}
+        accessibilityState={{ disabled: code.length !== 6 || isSearching }}
       >
         <LinearGradient
           colors={searchButtonGradient}
@@ -227,7 +234,7 @@ export default function JoinChallengeScreen() {
           start={GRADIENT_START}
           end={GRADIENT_END}
         >
-          {isLoading ? (
+          {isSearching ? (
             <ActivityIndicator color="white" />
           ) : (
             <>
@@ -376,8 +383,8 @@ const styles = StyleSheet.create({
   content: {
     flex: 1,
     padding: 20,
+    paddingTop: 80,
     alignItems: 'center',
-    justifyContent: 'center',
   },
   iconContainer: {
     width: 100,

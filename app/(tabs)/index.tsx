@@ -16,6 +16,7 @@ import { DailyChallengeCard } from '@/components/DailyChallengeCard';
 import { ProfileButton } from '@/components/ProfileButton';
 import { useColorScheme } from '@/hooks/useColorScheme';
 import { useTutorial } from '@/hooks/useTutorial';
+import { useDailyChallenge } from '@/hooks/useDailyChallenge';
 import { Colors } from '@/constants/Colors';
 
 // Icon for dark mode (light colored icon)
@@ -112,6 +113,7 @@ function DifficultySegment({ mode, label, isFirst, isLast, onPress, colorScheme 
 export default function HomeScreen() {
   const colorScheme = useColorScheme();
   const { showTutorial, dismissTutorial } = useTutorial();
+  const { todayCompleted } = useDailyChallenge();
 
   const handleModeSelect = (mode: 'easy' | 'medium' | 'hard') => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -166,7 +168,13 @@ export default function HomeScreen() {
 
   const handleDailyChallengePress = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    router.push({ pathname: '/game', params: { mode: 'daily' } });
+    router.push({
+      pathname: '/game',
+      params: {
+        mode: 'daily',
+        ...(todayCompleted && { showResults: 'true' })
+      }
+    });
   };
 
   // Warm accent color for Challenge section

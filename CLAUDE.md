@@ -140,6 +140,35 @@ interface Scripture {
 - **Haptic feedback:** Add haptics for button presses and feedback
 - **Expo Router:** File-based routing in `/app` directory
 
+## React Best Practices
+
+### Avoid Unnecessary useEffect
+Follow React's "You Might Not Need an Effect" guidelines:
+
+- **Don't sync state to props** - If you need to update state when props change, derive the value during render instead
+- **Don't use effects for initialization** - Use useState initializers or derive values
+- **Don't use effects for event handling** - Handle events in event handlers directly
+- **Prefer derived state** - Calculate values during render rather than storing and syncing
+
+**Instead of:**
+```typescript
+useEffect(() => {
+  if (someCondition) {
+    setSomeState(derivedValue);
+  }
+}, [someCondition]);
+```
+
+**Do this:**
+```typescript
+const derivedValue = someCondition ? computedValue : defaultValue;
+```
+
+**Valid useEffect uses:**
+- Fetching data on mount
+- Setting up subscriptions/event listeners (with cleanup)
+- Synchronizing with external systems (DOM, third-party libraries)
+
 ## Key Files
 
 | File | Purpose |

@@ -98,10 +98,8 @@ export function DailyChallengeCard({ onPress }: DailyChallengeCardProps) {
   }));
 
   const handlePressIn = () => {
-    if (!todayCompleted) {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-      scale.value = withSpring(0.97, SPRING_CONFIG);
-    }
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    scale.value = withSpring(0.97, SPRING_CONFIG);
   };
 
   const handlePressOut = () => {
@@ -164,10 +162,9 @@ export function DailyChallengeCard({ onPress }: DailyChallengeCardProps) {
         onPress={onPress}
         onPressIn={handlePressIn}
         onPressOut={handlePressOut}
-        disabled={todayCompleted}
         accessibilityRole="button"
         accessibilityLabel={`Daily Challenge. ${todayCompleted ? 'Completed' : 'New scripture available'}. ${stats.currentStreak} day streak.`}
-        accessibilityHint={todayCompleted ? 'Challenge completed for today' : 'Double tap to start the daily challenge'}
+        accessibilityHint={todayCompleted ? 'Double tap to view your result' : 'Double tap to start the daily challenge'}
       >
         <LinearGradient
           colors={getGradientColors()}

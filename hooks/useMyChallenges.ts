@@ -128,9 +128,9 @@ export function useMyChallenges(): UseMyChallengesReturn {
         mergeChallenges();
       },
       (err: any) => {
-        console.error('Creator challenges fetch error:', err);
-        // Don't show error for permission-denied or missing index
+        // Permission errors during sign-out are expected - skip logging
         if (err.code !== 'permission-denied' && !err.message?.includes('index')) {
+          console.error('Creator challenges fetch error:', err);
           setError('Failed to load challenges');
         }
         creatorLoaded = true;
@@ -148,9 +148,9 @@ export function useMyChallenges(): UseMyChallengesReturn {
         mergeChallenges();
       },
       (err: any) => {
-        console.error('Challenger challenges fetch error:', err);
-        // Don't show error for permission-denied or missing index (user may not have joined any challenges yet)
+        // Permission errors during sign-out are expected - skip logging
         if (err.code !== 'permission-denied' && !err.message?.includes('index')) {
+          console.error('Challenger challenges fetch error:', err);
           setError('Failed to load challenges');
         }
         challengerLoaded = true;

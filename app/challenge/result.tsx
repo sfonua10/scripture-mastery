@@ -312,7 +312,7 @@ export default function ChallengeResultScreen() {
                 <GradientButton
                   onPress={handleRematch}
                   label="New Challenge"
-                  variant="secondary"
+                  variant="teal"
                   size="large"
                   icon={<Ionicons name="refresh" size={24} color="white" />}
                 />
